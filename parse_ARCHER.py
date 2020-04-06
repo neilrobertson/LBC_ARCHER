@@ -317,7 +317,7 @@ for counter, participant_id in enumerate(sample_wave_dict.keys()):
 				AF = all_variant_dict[mutation_key][wave]['AF']
 				allele_fractions.append(AF)
 				output_rows.append(simplify_vcf_row(all_variant_dict[mutation_key][wave], participant_id, wave))
-				#print ("--> HERE WE FUCKING GO! Missing value found at wave: {0} mutation: {1}".format(wave, mutation_key))
+				#print ("Missing value found at wave: {0} mutation: {1}".format(wave, mutation_key))
 			else:
 				allele_fractions.append(MISSING_VALUE)
 		#print("Mutation: {0}    AFs: {1}".format(mutation_key, allele_fractions))
