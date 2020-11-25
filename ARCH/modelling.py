@@ -1,8 +1,12 @@
-# Last modification: E. Latorre -- 29-10-2020
+# Last modification: E. Latorre -- 4-11-2020
 
+# Module containing a model class definition and functions to fit exponential
+# and logistic models of growth.
 
 import numpy as np
-from lmfit import Parameters, minimize
+from lmfit import Parameters, Minimizer, minimize
+from lmfit.models import GaussianModel
+
 import plotly.figure_factory as ff
 import plotly.express as px
 import plotly.graph_objects as go
@@ -23,10 +27,10 @@ class model:
                          l_filter=self.l_filter, h_filter=self.h_filter,
                          min_points=self.min_points)
 
-    def fit(self, model='logistic', l2=0.1, common_fit=False):
+    def fit(self, model='logistic', reg=0.1, common_fit=False):
         self.model = model           # set model attribute
         if model == 'logistic':
-            self.out = logistic_model(self, l2, common_fit)
+            self.out = logistic_model(self, reg, common_fit)
         elif model == 'exponential':
             self.out = exponential_model(self, common_fit)
         else:
@@ -43,6 +47,20 @@ class model:
         return fit_plot(self, min_x, max_x, model=self.model)
 
 
+class model_emcee:
+    # mutation trajectory class for training mp models
+    def __init__(self, x, y, mutation, id, damage=None,
+                 damaging_class=None, known=None, out=None):
+        self.x = x
+        self.y = y
+        self.mutation = mutation
+        self.id = id
+        self.damage = damage
+        self.damaging_class = damaging_class
+        self.known = known
+        self.out = out
+
+
 def preprocess(cohort, gene, l_filter, h_filter, min_points):
     # set the trajectories that we want to fit
 
@@ -57,6 +75,7 @@ def preprocess(cohort, gene, l_filter, h_filter, min_points):
                len(traj.data) >= min_points and \
                traj.germline is False:
 
+                # append an entry for each trajectory
                 y.append(traj.data.AF)
                 x.append(traj.data.wave)
                 participant.append(part.id)
@@ -80,28 +99,10 @@ def preprocess(cohort, gene, l_filter, h_filter, min_points):
 """ Logistic model fit functions"""
 
 
-def logistic_model(self, l2, common_fit):
-    # l2 = weight of the regularization of amplitude parameter around 0.5
-    # initialize parameters using default values and boundary values
-    fit_params = Parameters()
-    for iy, y in enumerate(self.y):
-        fit_params.add('amp_%i' % (iy+1),
-                       value=0.4, min=0.2, max=0.5)
-        fit_params.add('fit_%i' % (iy+1), value=0)
-        fit_params.add('dis_%i' % (iy+1), value=0,   min=-25,  max=25)
-
-    if common_fit is True:
-        # force all fit parameters equal
-        for iy in range(2, len(self.y)+1):
-            fit_params['fit_%i' % iy].expr = 'fit_1'
-
-    # fit the data using lmfit 'minimize' function
-    return minimize(logistic_objective, fit_params, args=(self.x, self.y, l2))
-
-
-def logistic(x, amp, fit, dis):
+def logistic(x, amplitude, fitness, origin, N0=0.00001):
     """logistic lineshape."""
-    return amp / (1.+np.exp(-fit*(x-dis)))
+    sig_center = origin + (1/fitness) * np.log((amplitude-N0)/N0)
+    return amplitude / (1. + np.exp(- fitness * (x - sig_center)))
 
 
 def logistic_dataset(params, i, x):
@@ -112,24 +113,93 @@ def logistic_dataset(params, i, x):
     return logistic(x, amp, fit, dis)
 
 
-def logistic_objective(params, x, data, a):
+def logistic_model(self, l2, common_fit):
+    # l2 = weight of the regularization of amplitude parameter around 0.5
+    # initialize parameters using default values and boundary values
+    fit_params = Parameters()
+    for iy, y in enumerate(self.y):
+        fit_params.add('amp_%i' % (iy+1),
+                       value=0.4, min=0.2, max=0.5)
+        fit_params.add('fit_%i' % (iy+1), value=0)
+        fit_params.add('dis_%i' % (iy+1), value=0)
+
+    if common_fit is True:
+        # force all fit parameters equal
+        for iy in range(2, len(self.y)+1):
+            fit_params['fit_%i' % iy].expr = 'fit_1'
+
+    # fit the data using lmfit 'minimize' function
+    return minimize(logistic_objective, fit_params, args=(self.x, self.y, l2))
+
+
+def logistic_objective(params, x, y, a):
     """Calculate total residual for fits of logistics to several data sets."""
 
     total_res = []   # keeps track of the cumulative residual
 
     # compute the residual for each trajectory in the dataset
-    for i, points in enumerate(zip(x, data)):
+    for i, points in enumerate(zip(x, y)):
         res = points[1] - logistic_dataset(params, i, points[0])
         total_res.append(res)
 
-    # now flatten this to a 1D array, as minimize() needs
-    # return np.concatenate(total_res).ravel()
-    total_res = np.concatenate(total_res).ravel()
-    for i, j in enumerate(data):
+    # each entry of total_res is the list of residuals for each trajectory
+    # as minimize() needs a 1D array -> flatten
+    total_res = np.concatenate(total_res)
+    for i, j in enumerate(y):
         total_res = np.append(total_res,
                               np.asarray([a*(0.5-params['amp_%i' % (i+1)])]))
 
     return total_res
+
+
+""" Logistic model emcee"""
+
+
+def residual(p, x, y):
+    """Calculate total residual for fits of logistics to several data sets."""
+    v = p.valuesdict()
+    res = y - logistic(x, v['amplitude'], v['fitness'], v['origin'])
+    np.append(res, v['regularization']*(0.5-v['amplitude']))
+
+    return res
+
+
+def logistic_emcee(self, emcee=False, fitness_max=5, regularization=0):
+    # set origin_min as participants age.
+    if 'LBC0' in self.id:
+        origin_min = - 79
+    else:
+        origin_min = -70
+
+    # Create model parameters
+    p = Parameters()
+    p.add('amplitude', value=0.4, min=0.2, max=0.5)
+    p.add('fitness', value=0.1, min=0, max=fitness_max)
+    p.add('origin', value=-30, min=origin_min, max=0)
+    p.add('regularization', value=regularization, vary=False)
+
+    # step 1: Crete Minimizer object model
+    self.model = Minimizer(residual, params=p, fcn_args=(self.x, self.y))
+    # step 2: minimize mini with Nelder-Mead algorithm (robust)
+    self.nelder = self.model.minimize(method='nelder')
+    # step 3: fine tune minimization with Levenberg-Marquardt algorithm ()
+    # This allows the computation of confidence intervals
+    self.ls = self.model.minimize(method='leastsq',
+                                  params=self.nelder.params.copy())
+
+    if emcee is True:
+        # add sigma parameter (~exp(variance) of the error distribution)
+        # self.nelder.params.add('__lnsigma',
+        #                       value=np.log(0.1),
+        #                       min=np.log(0.001), max=np.log(2))
+        self.emcee = minimize(residual, method='emcee', seed=1,
+                              nan_policy='omit', burn=300, steps=1000,
+                              nwalkers=100, thin=1,
+                              params=self.nelder.params,
+                              args=(self.x, self.y),
+                              is_weighted=False, progress=False)
+
+    return self
 
 
 """ Exponential model"""
@@ -178,6 +248,43 @@ def exp_objective(params, x, data):
     return total_res
 
 
+""" Gaussian model"""
+
+
+def gauss_fit(data, bin_number=200):
+    # Distribution - bin the data to create a histogram:
+    # x = bins, y = counts
+    y, x = np.histogram(data, bins=bin_number, range=(min(data), 0.06))
+    y = y/sum(y)
+    x = 0.5 * (x[:-1] + x[1:])
+
+    # Fitting a normal distribution using lmfit
+    # Design the model
+    gauss1 = GaussianModel(prefix='g1_')
+    pars = gauss1.guess(data=y, x=x)
+    mod = gauss1
+
+    # Fit the model
+    out = mod.fit(y, pars, x=x)
+
+    # Model components
+    comps = out.eval_components(x=x)
+
+    # Scatter plot
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(x=x, y=y, marker_color=colors[0],
+                         name='total gradients'))
+    fig.add_trace(go.Scatter(x=x, y=comps['g1_'],
+                             mode='lines', name='Fit'))
+
+    fig.update_layout(height=600, width=800,
+                      title_text="Side By Side Subplots")
+    fig.show()
+
+    return out
+
+
 """ Auxiliary plotting functions"""
 
 
@@ -186,6 +293,8 @@ def fit_plot(self, min_x, max_x, model):
     fitness = [self.out.params[s].value for s in self.out.params if "fit" in s]
     fitness = np.mean(fitness)
     chi = round(self.out.chisqr*1, 3)
+
+    # define a general evaluate function for both exponential and logistic
     if model == 'logistic':
         evaluate = logistic_dataset
     elif model == 'exponential':
@@ -194,6 +303,7 @@ def fit_plot(self, min_x, max_x, model):
     fig = go.Figure()
     x_line = np.linspace(min_x, max_x, 1000)
 
+    # Plot the first trajectory to create labels
     y_fit = evaluate(self.out.params, 0, x_line)
 
     fig.add_trace(go.Scatter(x=x_line, y=y_fit,
@@ -240,4 +350,24 @@ def fitness_distribution(self, bin_size):
                              bin_size=bin_size)
     # Add title
     fig.update_layout(title='Distribution of estimated fitness parameters')
+    return fig
+
+
+def mutation_plot(trajectories, mutation):
+    # plot fitted trajectories containing a mutation
+
+    fig = go.Figure()
+    x_line = np.linspace(0, 10, 1000)
+    for i, traj in enumerate(trajectories):
+        if traj.mutation == mutation or \
+           traj.mutation.split()[0] == mutation:
+
+            y_fit = logistic(x_line, traj.out.params['amp'],
+                             traj.out.params['fit'], traj.out.params['dis'])
+
+            fig.add_trace(go.Scatter(x=traj.x, y=traj.y,
+                                     name='data', mode='markers',
+                                     line=dict(color=colors[i % 10-1])))
+            fig.add_trace(go.Scatter(x=x_line, y=y_fit, name='fit',
+                                     line=dict(color=colors[i % 10-1])))
     return fig
