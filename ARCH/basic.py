@@ -100,18 +100,25 @@ def load(df):
             if np.mean(data.AF) > 0.45:
                 germline = True
 
-            # compute overall gradient and update total_grad
-            gradient = np.gradient(data.AF.iloc[[0, -1]].tolist(),
-                                   data.wave.iloc[[0, -1]].tolist())[0]
+            gradient = np.diff(data.AF.iloc[[0, -1]]) \
+                        / np.sqrt(np.diff(data.wave.iloc[[0, -1]]))[0]
+
             total_grad.append(gradient)
 
             # compute the relative gradients in data.gradient
             data['gradient'] = np.gradient(data.AF.tolist(),
                                            data.wave.tolist())
 
+            data['regularized_gradient'] = np.append(
+                                          np.diff(data.AF)
+                                          / np.sqrt(np.diff(data.wave)),
+                                          None)
+            data.regularized_gradient = data.regularized_gradient.astype(float)
+
             # append trajectory to the list of trajectories
             traj.append(trajectory(mutation=key,
-                                   data=data[['AF', 'wave', 'gradient']],
+                                   data=data[['AF', 'wave', 'gradient',
+                                              'regularized_gradient']],
                                    germline=germline,
                                    gradient=gradient
                                    ))
