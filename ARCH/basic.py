@@ -5,7 +5,7 @@
 
 import pandas as pd
 import numpy as np
-import multiprocessing as mp
+
 import plotly.graph_objects as go
 
 
@@ -101,7 +101,9 @@ def load(df):
                 germline = True
 
             gradient = np.diff(data.AF.iloc[[0, -1]]) \
-                        / np.sqrt(np.diff(data.wave.iloc[[0, -1]]))[0]
+                       / np.sqrt(np.diff(data.wave.iloc[[0, -1]]))
+
+            gradient = gradient[0]
 
             total_grad.append(gradient)
 
@@ -109,6 +111,7 @@ def load(df):
             data['gradient'] = np.gradient(data.AF.tolist(),
                                            data.wave.tolist())
 
+            # Compute the regularized gradient: Diff(vaf)/sqrt(t)
             data['regularized_gradient'] = np.append(
                                           np.diff(data.AF)
                                           / np.sqrt(np.diff(data.wave)),
@@ -155,18 +158,28 @@ def load_id(id, df):
             germline = True
 
         # compute overall gradient and update total_grad
-        gradient = np.gradient(data.AF.iloc[[0, -1]].tolist(),
-                               data.wave.iloc[[0, -1]].tolist())[0]
+        gradient = np.diff(data.AF.iloc[[0, -1]]) \
+                            / np.sqrt(np.diff(data.wave.iloc[[0, -1]]))[0]
+        gradient = gradient.astype(float)
+
 
         # compute the relative gradients in data.gradient
         data['gradient'] = np.gradient(data.AF.tolist(),
                                        data.wave.tolist())
 
+        # Compute the regularized gradient: the difference in Diff(vaf)/sqrt(t)
+        data['regularized_gradient'] = np.append(
+                                      np.diff(data.AF)
+                                      / np.sqrt(np.diff(data.wave)),
+                                      None)
+        data.regularized_gradient = data.regularized_gradient.astype(float)
+
         # append trajectory to the list of trajectories
         traj.append(trajectory(mutation=key,
-                    data=data[['AF', 'wave', 'gradient']],
-                    germline=germline,
-                    gradient=gradient))
+                               data=data[['AF', 'wave',
+                                          'gradient', 'regularized_gradient']],
+                               germline=germline,
+                               gradient=gradient))
 
     # Add all trajectories to the participant
     part.trajectories = traj
@@ -176,7 +189,7 @@ def load_id(id, df):
     return part
 
 
-def melt(cohort, mutation=None):
+def melt(cohort, filter=1, mutation=None):
     # melts a cohort into one pandas dataframe
     # similar to the original pd.dataframe but with relative gradients computed
 
@@ -184,11 +197,12 @@ def melt(cohort, mutation=None):
 
     for part in cohort:
         for traj in part.trajectories:
-            new = traj.data
-            new['mutation'] = traj.mutation
-            new['germline'] = traj.germline
-            new['fitness'] = new['gradient']/new['AF']
-            full = full.append(new, ignore_index=True)
+            if traj.data.AF.mean() < filter:
+                new = traj.data
+                new['mutation'] = traj.mutation
+                new['germline'] = traj.germline
+                new['fitness'] = new['gradient']/new['AF']
+                full = full.append(new, ignore_index=True)
 
     # subset rows containing mutations in a particular gene
     if mutation is not None:

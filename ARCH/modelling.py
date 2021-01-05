@@ -49,11 +49,12 @@ class model:
 
 class model_emcee:
     # mutation trajectory class for training mp models
-    def __init__(self, x, y, mutation, id, damage=None,
+    def __init__(self, x, y, gene, mutation, id, damage=None,
                  damaging_class=None, known=None, out=None):
         self.x = x
         self.y = y
         self.mutation = mutation
+        self.gene = gene
         self.id = id
         self.damage = damage
         self.damaging_class = damaging_class
@@ -99,7 +100,7 @@ def preprocess(cohort, gene, l_filter, h_filter, min_points):
 """ Logistic model fit functions"""
 
 
-def logistic(x, amplitude, fitness, origin, N0=0.00001):
+def logistic(x, amplitude, fitness, origin, N0=0.004):
     """logistic lineshape."""
     sig_center = origin + (1/fitness) * np.log((amplitude-N0)/N0)
     return amplitude / (1. + np.exp(- fitness * (x - sig_center)))
@@ -155,16 +156,17 @@ def logistic_objective(params, x, y, a):
 """ Logistic model emcee"""
 
 
-def residual(p, x, y):
+def residual(p, x, y, initial_pop=0.004):
     """Calculate total residual for fits of logistics to several data sets."""
     v = p.valuesdict()
-    res = y - logistic(x, v['amplitude'], v['fitness'], v['origin'])
-    np.append(res, v['regularization']*(0.5-v['amplitude']))
+    res = y - logistic(x, v['amplitude'],
+                       v['fitness'], v['origin'], initial_pop)
+    res = np.append(res, v['regularization']*(0.5-v['amplitude']))
 
     return res
 
 
-def logistic_emcee(self, emcee=False, fitness_max=5, regularization=0):
+def logistic_emcee(self, emcee=True, regularization=0.05):
     # set origin_min as participants age.
     if 'LBC0' in self.id:
         origin_min = - 79
@@ -174,12 +176,13 @@ def logistic_emcee(self, emcee=False, fitness_max=5, regularization=0):
     # Create model parameters
     p = Parameters()
     p.add('amplitude', value=0.4, min=0.2, max=0.5)
-    p.add('fitness', value=0.1, min=0, max=fitness_max)
+    p.add('fitness', value=0.1, min=0)
     p.add('origin', value=-30, min=origin_min, max=0)
     p.add('regularization', value=regularization, vary=False)
 
     # step 1: Crete Minimizer object model
-    self.model = Minimizer(residual, params=p, fcn_args=(self.x, self.y))
+    self.model = Minimizer(residual, params=p,
+                           fcn_args=(self.x, self.y))
     # step 2: minimize mini with Nelder-Mead algorithm (robust)
     self.nelder = self.model.minimize(method='nelder')
     # step 3: fine tune minimization with Levenberg-Marquardt algorithm ()
@@ -189,7 +192,7 @@ def logistic_emcee(self, emcee=False, fitness_max=5, regularization=0):
 
     if emcee is True:
         # add sigma parameter (~exp(variance) of the error distribution)
-        # self.nelder.params.add('__lnsigma',
+        #self.nelder.params.add('__lnsigma',
         #                       value=np.log(0.1),
         #                       min=np.log(0.001), max=np.log(2))
         self.emcee = minimize(residual, method='emcee', seed=1,
@@ -251,10 +254,12 @@ def exp_objective(params, x, data):
 """ Gaussian model"""
 
 
-def gauss_fit(data, bin_number=200):
+def gauss_fit(data, center=None, bin_number=200):
     # Distribution - bin the data to create a histogram:
     # x = bins, y = counts
-    y, x = np.histogram(data, bins=bin_number, range=(min(data), 0.06))
+    y, x = np.histogram(data, bins=bin_number,
+                        range=(min(data), max(data)),
+                        density=True)
     y = y/sum(y)
     x = 0.5 * (x[:-1] + x[1:])
 
@@ -262,6 +267,9 @@ def gauss_fit(data, bin_number=200):
     # Design the model
     gauss1 = GaussianModel(prefix='g1_')
     pars = gauss1.guess(data=y, x=x)
+    if center is not None:
+        pars['g1_center'].value = center
+        pars['g1_center'].vary = False
     mod = gauss1
 
     # Fit the model
@@ -279,10 +287,9 @@ def gauss_fit(data, bin_number=200):
                              mode='lines', name='Fit'))
 
     fig.update_layout(height=600, width=800,
-                      title_text="Side By Side Subplots")
-    fig.show()
+                      title_text="Fitted Gaussian distribution")
 
-    return out
+    return out, fig
 
 
 """ Auxiliary plotting functions"""
@@ -357,17 +364,26 @@ def mutation_plot(trajectories, mutation):
     # plot fitted trajectories containing a mutation
 
     fig = go.Figure()
-    x_line = np.linspace(0, 10, 1000)
-    for i, traj in enumerate(trajectories):
+    x_line = np.linspace(-5, 15, 1000)
+    i = 0  # color counter
+    for traj in trajectories:
         if traj.mutation == mutation or \
            traj.mutation.split()[0] == mutation:
 
-            y_fit = logistic(x_line, traj.out.params['amp'],
-                             traj.out.params['fit'], traj.out.params['dis'])
+            y_fit = logistic(x_line, traj.nelder.params['amplitude'],
+                             traj.nelder.params['fitness'],
+                             traj.nelder.params['origin'])
 
             fig.add_trace(go.Scatter(x=traj.x, y=traj.y,
-                                     name='data', mode='markers',
+                                     name=traj.mutation,
+                                     mode='markers',
                                      line=dict(color=colors[i % 10-1])))
+
             fig.add_trace(go.Scatter(x=x_line, y=y_fit, name='fit',
-                                     line=dict(color=colors[i % 10-1])))
+                                     line=dict(color=colors[i % 10-1]),
+                                     showlegend=False))
+            i += 1  # update color counter
+    fig.update_layout(title=f' {mutation} mutation fitted trajectories')
+    fig.update_xaxes(title='time in years')
+    fig.update_yaxes(title='AF')
     return fig
