@@ -23,7 +23,7 @@ def stack_plot(participant, norm=True):
     fig = go.Figure()
     if norm is True:
         for traj in participant.trajectories:
-            fig.add_trace(go.Scatter(x=traj.data.wave,
+            fig.add_trace(go.Scatter(x=traj.data.age,
                                      y=traj.data.AF,
                                      name=f'{traj.mutation}',
                                      hovertemplate='VAF: %{y}',
@@ -37,7 +37,7 @@ def stack_plot(participant, norm=True):
                                      ticksuffix='%'))
     else:
         for traj in participant.trajectories:
-            fig.add_trace(go.Scatter(x=traj.data.wave,
+            fig.add_trace(go.Scatter(x=traj.data.age,
                                      y=traj.data.AF,
                                      name=f'{traj.mutation}',
                                      hovertemplate='VAF: %{y}',
@@ -58,7 +58,7 @@ def mutation(cohort, mutation):
         for i, word in enumerate(part.mutation_list):
             if mutation in word.split():
                 traj = part.trajectories[i]
-                fig.add_trace(go.Scatter(x=traj.data.wave,
+                fig.add_trace(go.Scatter(x=traj.data.age,
                                          y=traj.data.AF,
                                          mode='lines+markers',
                                          name=traj.mutation,
@@ -66,39 +66,7 @@ def mutation(cohort, mutation):
                                          ))
     # Edit the layout
     fig.update_layout(title=f'Trajectories containing mutation {mutation}',
-                      xaxis_title='Time (years since first wave)',
-                      yaxis_title='VAF')
-
-    return fig
-
-
-def threshold(cohort, threshold, mutation='All'):
-    # plot trajectories with gradient > threshold
-    fig = go.Figure()
-
-    if mutation == 'All':
-        for part in cohort:
-            for traj in part.trajectories:
-                if traj.gradient > threshold:
-                    fig.add_trace(go.Scatter(x=traj.data.wave,
-                                             y=traj.data.AF,
-                                             mode='lines+markers',
-                                             name=part.id,
-                                             hovertemplate=f"{part.id}"
-                                             ))
-    else:
-        for part in cohort:
-            for traj in part.trajectories:
-                if (mutation in traj.mutation) and (traj.gradient > threshold):
-                    fig.add_trace(go.Scatter(x=traj.data.wave, y=traj.data.AF,
-                                             mode='lines+markers',
-                                             name=part.id,
-                                             hovertemplate=f"{part.id}"
-                                             ))
-
-    # Edit the layout
-    fig.update_layout(title=f'Trajectories containing mutation {mutation}',
-                      xaxis_title='Time (years since first wave)',
+                      xaxis_title='Time (years since first age)',
                       yaxis_title='VAF')
 
     return fig
@@ -107,36 +75,28 @@ def threshold(cohort, threshold, mutation='All'):
 """ Plotting functions for mutation statistics"""
 
 
-def top_bar(cohort, n_mutations=5, l_vaf=0.1, u_vaf=0.4):
-    m_count = pd.DataFrame(columns=['mutation', 'VAF_average'])
+def top_bar(cohort, n_genes=10, all=False):
+    gene_list = []
     for part in cohort:
         for traj in part.trajectories:
-            # For each trajectory append mutated gene and average VAF
-            m_count = m_count.append({'mutation': traj.mutation.split()[0],
-                                      'AF_average': traj.data.AF.mean()},
-                                     ignore_index=True)
+            gene_list.append(traj.mutation.split()[0])
+    gene_dict = {element: 0 for element in set(gene_list)}
+    for part in cohort:
+        for traj in part.trajectories:
+            gene_dict[traj.mutation.split()[0]] = gene_dict[traj.mutation.split()[0]] + 1
+    gene_dict = dict(sorted(gene_dict.items(),
+                            key=lambda item: item[1], reverse=True))
 
-    # Filter trajectories whose average is below VAF=0.1 or above 0.4
-    m_count = m_count[m_count.AF_average.between(l_vaf, u_vaf)]
+    if all is False:
+        # Filter top mutations
+        top_genes = list(gene_dict.keys())[0:n_genes]
+        gene_dict = {gene: gene_dict[gene] for gene in top_genes}
 
-    top_count = pd.DataFrame(columns=['mutation', 'count', 'VAF_average'])
-
-    for i in range(0, n_mutations):
-        mutation = m_count['mutation'].value_counts().index[i]
-        count = m_count['mutation'].value_counts()[i]
-        AF = m_count.groupby('mutation').mean().loc[mutation][0]
-        top_count = top_count.append({'mutation': mutation,
-                                      'count': count,
-                                      'VAF': AF},
-                                     ignore_index=True)
-    # bar plot of mutations
-    fig = px.bar(top_count, x='mutation', y='count',
-                 hover_data=['count', 'VAF'], color='VAF')
-    fig.update_layout(title=f'Most commonly mutated genes',
-                      xaxis_title='Gene',
-                      yaxis_title='Count')
-
+    # Bar plot
+    fig = go.Figure([go.Bar(x=list(gene_dict.keys()),
+                            y=list(gene_dict.values()))])
     return fig
+
 
 """ Plotting functions for gradients statistics"""
 
@@ -169,7 +129,7 @@ def local_gardients(cohort, mutations):
         for traj in part.trajectories:
             if traj.mutation.split()[0] in mutations:
                 for i, row in traj.data.iterrows():
-                    data = data.append({'gradient': row.gradient,
+                    data = data.append({'gradient': row.regularized_gradient,
                                         'participant': part.id,
                                         'mutation': traj.mutation.split()[0]},
                                        ignore_index=True)
