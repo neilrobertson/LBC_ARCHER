@@ -13,7 +13,7 @@ class participant:
     '''Definition of the participant class object.
     Attributes:
     - id: a string with the participant's id
-    - mutation_list: a list of strings of all mutations detected at any wave
+    - mutation_list: a list of strings of all mutations detected at any age
     - trajectories: a list of trajectory class objects corresponding to each
                     trajectory present in a participant.
     - data: pandas dataframe slice of the full dataset containing information
@@ -35,18 +35,18 @@ class participant:
         # If germline is True then plot all all trajectories
         if germline is True:
             for traj in self.trajectories:
-                fig.add_trace(go.Scatter(x=traj.data.wave, y=traj.data.AF,
+                fig.add_trace(go.Scatter(x=traj.data.age, y=traj.data.AF,
                                          mode='lines+markers',
                                          name=traj.mutation))
         # If Germline is False only plot trajectories that are not germline
         else:
             for traj in self.trajectories:
                 if traj.germline is False:
-                    fig.add_trace(go.Scatter(x=traj.data.wave, y=traj.data.AF,
+                    fig.add_trace(go.Scatter(x=traj.data.age, y=traj.data.AF,
                                              mode='lines+markers',
                                              name=traj.mutation))
         fig.update_layout(title=f'Trajectories of participant {self.id}',
-                          xaxis_title='Time (years since first wave)',
+                          xaxis_title='Age (in years)',
                           yaxis_title='VAF')
         return fig
 
@@ -72,8 +72,8 @@ def load(df):
     # Transform a dataset into a list of participant class objects
 
     cohort = []               # initialize complete list of participants
-    total_grad = []           # initialize complete list of gradients
-    df.wave = 3*(df.wave-1)   # transform the time into years since first wave
+    df['age'] = df['wave']
+    df.age = 3*(df.age-1)   # transform the time into years since first age
 
     for part in df.participant_id.unique():
         # create a list of participant objects with id ad data attributes.
@@ -93,6 +93,11 @@ def load(df):
             if len(data) < 2:   # avoid trajectories withh only 1 point
                 continue
 
+            if 'LBC0' in part.id:
+                data.age = data.age + 79
+            else:
+                data.age = data.age + 70
+
             mutation_list.append(key)
 
             # germline condition
@@ -100,27 +105,22 @@ def load(df):
             if np.mean(data.AF) > 0.45:
                 germline = True
 
+            # Compute the overall regularized gradient
             gradient = np.diff(data.AF.iloc[[0, -1]]) \
-                       / np.sqrt(np.diff(data.wave.iloc[[0, -1]]))
+                        / np.sqrt(np.diff(data.age.iloc[[0, -1]]))
 
             gradient = gradient[0]
-
-            total_grad.append(gradient)
-
-            # compute the relative gradients in data.gradient
-            data['gradient'] = np.gradient(data.AF.tolist(),
-                                           data.wave.tolist())
 
             # Compute the regularized gradient: Diff(vaf)/sqrt(t)
             data['regularized_gradient'] = np.append(
                                           np.diff(data.AF)
-                                          / np.sqrt(np.diff(data.wave)),
+                                          / np.sqrt(np.diff(data.age)),
                                           None)
             data.regularized_gradient = data.regularized_gradient.astype(float)
 
             # append trajectory to the list of trajectories
             traj.append(trajectory(mutation=key,
-                                   data=data[['AF', 'wave', 'gradient',
+                                   data=data[['AF', 'age',
                                               'regularized_gradient']],
                                    germline=germline,
                                    gradient=gradient
@@ -132,7 +132,7 @@ def load(df):
         # add the list of all mutations to each individual
         part.mutation_list = mutation_list
 
-    return cohort, total_grad
+    return cohort
 
 
 def load_id(id, df):
@@ -150,6 +150,15 @@ def load_id(id, df):
         if len(data) < 2:   # avoid trajectories withh only 1 point
             continue
 
+        # transform the time into years since first age
+        data['age'] = data['wave']
+        data.age = 3*(data.age-1)
+        # Correct time for participants age
+        if 'LBC0' in part.id:
+            data.age = data.age + 79
+        else:
+            data.age = data.age + 70
+
         mutation_list.append(key)
 
         # germline condition
@@ -159,25 +168,22 @@ def load_id(id, df):
 
         # compute overall gradient and update total_grad
         gradient = np.diff(data.AF.iloc[[0, -1]]) \
-                            / np.sqrt(np.diff(data.wave.iloc[[0, -1]]))[0]
+                            / np.sqrt(np.diff(data.age.iloc[[0, -1]]))[0]
+
         gradient = gradient.astype(float)
 
-
-        # compute the relative gradients in data.gradient
-        data['gradient'] = np.gradient(data.AF.tolist(),
-                                       data.wave.tolist())
 
         # Compute the regularized gradient: the difference in Diff(vaf)/sqrt(t)
         data['regularized_gradient'] = np.append(
                                       np.diff(data.AF)
-                                      / np.sqrt(np.diff(data.wave)),
+                                      / np.sqrt(np.diff(data.age)),
                                       None)
         data.regularized_gradient = data.regularized_gradient.astype(float)
 
         # append trajectory to the list of trajectories
         traj.append(trajectory(mutation=key,
-                               data=data[['AF', 'wave',
-                                          'gradient', 'regularized_gradient']],
+                               data=data[['AF', 'age',
+                                          'regularized_gradient']],
                                germline=germline,
                                gradient=gradient))
 
