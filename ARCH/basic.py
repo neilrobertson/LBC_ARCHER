@@ -172,7 +172,6 @@ def load_id(id, df):
 
         gradient = gradient.astype(float)
 
-
         # Compute the regularized gradient: the difference in Diff(vaf)/sqrt(t)
         data['regularized_gradient'] = np.append(
                                       np.diff(data.AF)
@@ -207,7 +206,7 @@ def melt(cohort, filter=1, mutation=None):
                 new = traj.data
                 new['mutation'] = traj.mutation
                 new['germline'] = traj.germline
-                new['fitness'] = new['gradient']/new['AF']
+                new['fitness'] = new['regularized_gradient']/new['AF']
                 full = full.append(new, ignore_index=True)
 
     # subset rows containing mutations in a particular gene
