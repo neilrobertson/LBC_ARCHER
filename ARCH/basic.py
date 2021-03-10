@@ -54,15 +54,18 @@ class participant:
 class trajectory:
     '''Definition of the trajectory class object.
     Attributes:
-    - mutation: string with the name of the mutation this trajectory follows
-    - germline: boolean with the germline status of the mutation
-    - data: pandas dataframe with the trajectory data
-    - gradient: gradient between the first and the last point of the trajectory
+    - mutation: string with the name of the mutation this trajectory follows.
+    = p_key: amino acid change.
+    - germline: boolean with the germline status of the mutation.
+    - data: pandas dataframe with the trajectory data.
+    - gradient: gradient between the first
+                and the last point of the trajectory.
     '''
 
-    def __init__(self, mutation=None, data=None, germline=False,
+    def __init__(self, mutation=None, p_key=None, data=None, germline=False,
                  gradient=None):
         self.mutation = mutation
+        self.p_key = p_key
         self.germline = germline
         self.data = data
         self.gradient = gradient
@@ -88,11 +91,14 @@ def load(df):
 
         # add a trajectory for each mutation present in a participant
         for key in part.data.key.unique():
-
+            # Create a copy of the data slice corresponding to a trajectory
             data = part.data[part.data['key'] == key].copy()
             if len(data) < 2:   # avoid trajectories withh only 1 point
                 continue
+            # Extract the 1_letter amino acid change code
+            p_key = data['p_key_1'].unique()[0]
 
+            # Compute participant's age
             if 'LBC0' in part.id:
                 data.age = data.age + 79
             else:
@@ -105,21 +111,21 @@ def load(df):
             if np.mean(data.AF) > 0.45:
                 germline = True
 
-            # Compute the overall regularized gradient
-            gradient = np.diff(data.AF.iloc[[0, -1]]) \
-                        / np.sqrt(np.diff(data.age.iloc[[0, -1]]))
+            # compute overall gradient and update total_grad
+            gradient = (np.diff(data.AF.iloc[[0, -1]])
+                        / np.sqrt(np.diff(data.age.iloc[[0, -1]])))[0]
 
-            gradient = gradient[0]
-
-            # Compute the regularized gradient: Diff(vaf)/sqrt(t)
+            # Compute the regularized gradient: Diff(vaf)/sqrt(Diff(t))
             data['regularized_gradient'] = np.append(
                                           np.diff(data.AF)
                                           / np.sqrt(np.diff(data.age)),
                                           None)
+
             data.regularized_gradient = data.regularized_gradient.astype(float)
 
             # append trajectory to the list of trajectories
             traj.append(trajectory(mutation=key,
+                                   p_key=p_key,
                                    data=data[['AF', 'age',
                                               'regularized_gradient']],
                                    germline=germline,
@@ -149,7 +155,8 @@ def load_id(id, df):
         data = part.data[part.data['key'] == key].copy()
         if len(data) < 2:   # avoid trajectories withh only 1 point
             continue
-
+        # Extract the 1_letter amino acid change code
+        p_key = data['p_key_1'].unique()[0]
         # transform the time into years since first age
         data['age'] = data['wave']
         data.age = 3*(data.age-1)
@@ -167,12 +174,12 @@ def load_id(id, df):
             germline = True
 
         # compute overall gradient and update total_grad
-        gradient = np.diff(data.AF.iloc[[0, -1]]) \
-                            / np.sqrt(np.diff(data.age.iloc[[0, -1]]))[0]
+        gradient = (np.diff(data.AF.iloc[[0, -1]])
+                    / np.sqrt(np.diff(data.age.iloc[[0, -1]])))[0]
 
         gradient = gradient.astype(float)
 
-        # Compute the regularized gradient: the difference in Diff(vaf)/sqrt(t)
+        # Compute the regularized gradient: Diff(vaf)/sqrt(Diff(t))
         data['regularized_gradient'] = np.append(
                                       np.diff(data.AF)
                                       / np.sqrt(np.diff(data.age)),
@@ -183,6 +190,7 @@ def load_id(id, df):
         traj.append(trajectory(mutation=key,
                                data=data[['AF', 'age',
                                           'regularized_gradient']],
+                               p_key=p_key,
                                germline=germline,
                                gradient=gradient))
 
@@ -214,3 +222,18 @@ def melt(cohort, filter=1, mutation=None):
         full = full[full['mutation'].str.contains(mutation)]
 
     return full
+
+
+def replace(df):
+    '''Append column to dataset with
+    1 letter amino acid change description'''
+    singleletter = {'Cys': 'C', 'Asp': 'D', 'Ser': 'S', 'Gln': 'Q',
+                    'Lys': 'K', 'Trp': 'W', 'Asn': 'N', 'Pro': 'P',
+                    'Thr': 'T', 'Phe': 'F', 'Ala': 'A', 'Gly': 'G',
+                    'Ile': 'I', 'Leu': 'L', 'His': 'H', 'Arg': 'R',
+                    'Met': 'M', 'Val': 'V', 'Glu': 'E', 'Tyr': 'Y',
+                    'Ter': '*'}
+
+    df['p_key_1'] = df["protein_substitution"].replace(singleletter, regex=True).str.split('.', expand=True)[1]
+    df['p_key_1'] = df['PreferredSymbol'] + ' ' + df['p_key_1']
+    return df
