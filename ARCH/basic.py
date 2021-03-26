@@ -62,21 +62,39 @@ class trajectory:
                 and the last point of the trajectory.
     '''
 
-    def __init__(self, mutation=None, p_key=None, data=None, germline=False,
-                 gradient=None):
+    def __init__(self, mutation=None, p_key=None, data=None,
+                 variant_class=None, germline=False, gradient=None):
         self.mutation = mutation
         self.p_key = p_key
+        self.variant_class = variant_class
         self.germline = germline
         self.data = data
         self.gradient = gradient
 
 
 def load(df):
-    # Transform a dataset into a list of participant class objects
+    """ Transform a dataset into a list of participant class objects.
+    Returns list of participants."""
 
-    cohort = []               # initialize complete list of participants
+    # Create column with amino acid changes key.
+    # Step 1: Create 3 to 1 letter dictionary.
+    d = {'Cys': 'C', 'Asp': 'D', 'Ser': 'S', 'Gln': 'Q', 'Lys': 'K',
+         'Ile': 'I', 'Pro': 'P', 'Thr': 'T', 'Phe': 'F', 'Asn': 'N',
+         'Gly': 'G', 'His': 'H', 'Leu': 'L', 'Arg': 'R', 'Trp': 'W',
+         'Ala': 'A', 'Val': 'V', 'Glu': 'E', 'Tyr': 'Y', 'Met': 'M',
+         'Ter': '*'}
+
+    # Step 2: append new columns containing gene + amino acid change
+    df['p_key_1'] = (df['PreferredSymbol']
+                     + ' ' + df['protein_substitution'].replace(d, regex=True))
+    df['p_key'] = df['PreferredSymbol'] + ' ' + df['protein_substitution']
+
+    # transform the time into years from 1st wave.
     df['age'] = df['wave']
-    df.age = 3*(df.age-1)   # transform the time into years since first age
+    df.age = 3*(df.age-1)
+
+    # initialize complete list of participants
+    cohort = []
 
     for part in df.participant_id.unique():
         # create a list of participant objects with id ad data attributes.
@@ -97,6 +115,7 @@ def load(df):
                 continue
             # Extract the 1_letter amino acid change code
             p_key = data['p_key_1'].unique()[0]
+            variant = data['Variant_Classification'].unique()[0]
 
             # Compute participant's age
             if 'LBC0' in part.id:
@@ -126,6 +145,7 @@ def load(df):
             # append trajectory to the list of trajectories
             traj.append(trajectory(mutation=key,
                                    p_key=p_key,
+                                   variant_class=variant,
                                    data=data[['AF', 'age',
                                               'regularized_gradient']],
                                    germline=germline,

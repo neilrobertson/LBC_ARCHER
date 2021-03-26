@@ -7,17 +7,17 @@ from sklearn.linear_model import LinearRegression
 
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.subplots import make_subplots
 colors = px.colors.qualitative.Plotly
 
 
 class filter():
     """Class object corresponding to a filtering of the full cohort"""
 
-    def __init__(self, model=None, gradient_plot=None, report=None,
+    def __init__(self, model=None, gradient_plot=None,
                  neutral_dist=None, gene_bar=None, gene_dict=None):
         self.model = model
         self.gradient_plot = gradient_plot
-        self.report = report
         self.neutral_dist = neutral_dist
         self.gene_bar = gene_bar
         self.gene_dict = gene_dict
@@ -43,19 +43,17 @@ def threshold_filter(cohort, threshold=0.02):
 
     for part in cohort:
         for traj in part.trajectories:
-            if max(traj.data.AF) > threshold:
+            if max(traj.data.AF) >= threshold:
                 traj.filter = True
             else:
                 traj.filter = False
 
     model = model_cohort(cohort)
     fig = CHIP_plot(cohort)
-    table = report(cohort, '2% VAF filter')
     genes = gene_bar(model)
 
     filter_class = filter(model=model,
                           gradient_plot=fig,
-                          report=table,
                           gene_bar=genes[0],
                           gene_dict=genes[1])
 
@@ -79,14 +77,11 @@ def neutral_filter(cohort, neutral, n_std=2):
             else:
                 traj.filter = False
 
-    filter_type = 'Neutral growth filter'
     model = model_cohort(cohort)
-    fig = neutral_plot(cohort, neutral, mean_regr, var_regr, n_std)
-    table = report(cohort, filter_type)
+    fig = neutral_plot_inset(cohort, neutral, mean_regr, var_regr, n_std)
     genes = gene_bar(model)
     filter_class = filter(model=model,
                           gradient_plot=fig,
-                          report=table,
                           neutral_dist=neutral_gradient_filter,
                           gene_bar=genes[0],
                           gene_dict=genes[1])
@@ -116,12 +111,11 @@ def neutral_distribution(syn, n_std=2):
                                      'regularized_gradient': gradient[0]},
                                     ignore_index=True))
 
-    melt_syn['bin'] = pd.cut(melt_syn['AF'], 25)
-
     # Exclude all mutations with VAF < 0.01
     # lack of data below this threshold alters the distribution of gradients
     filtered_melt_syn = melt_syn[melt_syn['AF'] > 0.01]
-
+    # Create bins
+    filtered_melt_syn['bin'] = pd.cut(filtered_melt_syn['AF'], 25)
     # Variance and mean with bootstrap for linear regression and plotting
 
     bin_center = []     # track bin centers
@@ -156,11 +150,10 @@ def neutral_distribution(syn, n_std=2):
     var_high = [x[1] for x in full]
 
     # Weighted linear regression on mean and variance ~ VAF
-    for n, i in enumerate(bin_size):
-        if i < 10:
-            bin_size[n] = 0
+    # for n, i in enumerate(bin_size):
+    #     if i < 10:
+    #         bin_size[n] = 0
     size_weight = np.array(bin_size)
-
 
     # Mean weighted model
     mean_regr = LinearRegression(fit_intercept=True)
@@ -249,31 +242,7 @@ def neutral_distribution(syn, n_std=2):
     return mean_regr, var_regr, [fig, mean_fig, var_fig]
 
 
-def report(cohort, filter_type):
-    """Extract number of filtered variants, number of growing variants
-    and CHIP variants at initial timepoint.
-    """
-    counter = 0  # filtered variants
-    fit = 0      # filtered fit variants
-
-    for part in cohort:
-        for traj in part.trajectories:
-            if traj.filter is True:
-                counter += 1
-                if traj.gradient > 0:
-                    fit += 1
-
-    # Produce report table
-    fig = go.Figure()
-    fig.add_trace(
-        go.Table(header=dict(values=['Variants', filter_type]),
-                 cells=dict(values=[['<b>Detected',
-                                     '<b>Increasing'],
-                                    [counter, fit]])))
-    return fig, [counter, fit]
-
-
-def gene_bar(cohort, split = True):
+def gene_bar(cohort, split=True, relative=False):
     """Bar plot with counts of filtered mutations by gene."""
 
     if split is True:
@@ -282,12 +251,11 @@ def gene_bar(cohort, split = True):
         # Create a dictionary with all filtered genes
         gene_list = []
         for traj in cohort:
-                gene_list.append(traj.mutation.split()[0])
+            gene_list.append(traj.mutation.split()[0])
 
         gene_dict = {element: 0 for element in set(gene_list)}
         gene_dict_increasing = {element: 0 for element in set(gene_list)}
         gene_dict_decreasing = {element: 0 for element in set(gene_list)}
-
 
         # update the counts for each gene
         for traj in cohort:
@@ -310,17 +278,32 @@ def gene_bar(cohort, split = True):
         # extract ordered list of genes and values
         genes = [key for key in gene_dict.keys()]
         values_increasing = [gene_dict_increasing[gene] for gene in genes]
-        values_decreasing = [gene_dict_decreasing[gene] for gene in genes]
+        if relative is False:
+            values_decreasing = [gene_dict_decreasing[gene] for gene in genes]
+        else:
+            values_decreasing = [-gene_dict_decreasing[gene] for gene in genes]
+
+        total_inc = sum(values_increasing)
+        total_dec = np.abs(sum(values_decreasing))
 
         # Bar plot
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=genes, y=values_increasing, name='Increasing'))
-        fig.add_trace(go.Bar(x=genes, y=values_decreasing, name='Decreasing'))
+        fig.add_trace(
+            go.Bar(x=genes, y=values_increasing,
+                   name=f'{total_inc} Increasing',
+                   marker_color=colors[0]))
+        fig.add_trace(
+            go.Bar(x=genes, y=values_decreasing,
+                   name=f'{total_dec} Decreasing',
+                   marker_color=colors[0],
+                   opacity=0.3))
 
-        fig.update_layout(title='Gene distribution of filtered mutations',
-                          barmode='stack',
-                          template="simple_white",
-                          yaxis_title='Trajectory counts')
+        fig.update_layout(
+            title='Gene distribution of filtered mutations',
+            barmode='relative',
+            template="simple_white",
+            yaxis_title='Trajectory counts',
+            xaxis_tickangle=-45)
 
     else:                   # unsplit barplot
 
@@ -344,8 +327,15 @@ def gene_bar(cohort, split = True):
         fig = go.Figure()
         fig.add_trace(go.Bar(x=genes, y=values))
         fig.update_layout(title='Gene distribution of filtered mutations',
-                          template="simple_white")
-
+                          template="simple_white",
+                          xaxis_tickangle=-45)
+    # Labels position
+    fig.update_layout(legend=dict(
+            yanchor="top",
+            y=0.95,
+            xanchor="right",
+            x=0.95,
+        ))
     return fig, gene_dict
 
 
@@ -397,7 +387,8 @@ def CHIP_plot(cohort, threshold=0.02):
                        y=[fit_traj.gradient],
                        name='CHIP mutations',
                        mode='markers',
-                       marker=dict(color=color_group(fit_traj.filter)),
+                       marker=dict(color=color_group(fit_traj.filter),
+                                   size=5),
                        legendgroup=legend_group(fit_traj.filter),
                        showlegend=True))
 
@@ -408,7 +399,8 @@ def CHIP_plot(cohort, threshold=0.02):
                        y=[neutral_traj.gradient],
                        name='non-CHIP mutations',
                        mode='markers',
-                       marker=dict(color=color_group(neutral_traj.filter)),
+                       marker=dict(color=color_group(neutral_traj.filter),
+                                   size=5),
                        legendgroup=legend_group(neutral_traj.filter),
                        showlegend=True))
 
@@ -418,7 +410,8 @@ def CHIP_plot(cohort, threshold=0.02):
                 go.Scatter(x=[traj.data.AF.iloc[0]],
                            y=[traj.gradient],
                            mode='markers',
-                           marker=dict(color=color_group(traj.filter)),
+                           marker=dict(color=color_group(traj.filter),
+                                       size=5),
                            legendgroup=legend_group(traj.filter),
                            showlegend=False))
     # Add vertical delimitation of threshold
@@ -429,8 +422,145 @@ def CHIP_plot(cohort, threshold=0.02):
                    line=dict(color=colors[2], width=3, dash='dash')))
     fig.update_layout(title=('Filtering trajectories '
                              'achieving VAF > 0.02 over timespan'))
-    fig.update_xaxes(title='VAF', range=[-0.05, 0.35])
+    fig.update_xaxes(title='VAF', range=[0, 0.35])
     fig.update_yaxes(title='Gradient', range=[-0.03, 0.08])
+
+    fig.update_layout(template='plotly_white')
+
+    fig.update_layout(legend=dict(
+        yanchor="top",
+        y=0.95,
+        xanchor="right",
+        x=0.95,
+    ))
+
+    return fig
+
+
+def CHIP_plot_inset(cohort, threshold=0.02,
+                    xrange_2=[0.01, 0.03], yrange_2=[-0.01, 0.005]):
+    """ Plot the selection of filtered variants.
+    threshold: Default = 0.02.
+    x_axis: VAF.
+    y_axis: gradient.
+    color: filter attribute.
+    """
+
+    # Find fit and netural trajectories to create group
+    fit_traj = find_fit(cohort)
+    neutral_traj = find_neutral(cohort)
+
+    def legend_group(filter):
+        """Legend group assigns a legend group based on filter attribute"""
+        if filter is True:
+            return 'Fit'
+        else:
+            return 'Neutral'
+
+    def color_group(filter):
+        """ returns a different color based on filter attribute"""
+        if filter is True:
+            return colors[0]
+        else:
+            return colors[4]
+
+    # Create figure with inset
+    fig = make_subplots(insets=[{'cell': (1, 1), 'l': 0.7, 'b': 0.3}])
+
+    # Create trajectories for legend groups
+    # Fit trajectories
+    if fit_traj is not None:
+        fig.add_trace(
+            go.Scatter(x=[fit_traj.data.AF.iloc[0]],
+                       y=[fit_traj.gradient],
+                       name='CHIP mutations',
+                       mode='markers',
+                       marker=dict(color=color_group(fit_traj.filter),
+                                   size=5),
+                       legendgroup=legend_group(fit_traj.filter),
+                       showlegend=True))
+
+    # Neutral trajectories
+    if neutral_traj is not None:
+        fig.add_trace(
+            go.Scatter(x=[neutral_traj.data.AF.iloc[0]],
+                       y=[neutral_traj.gradient],
+                       name='non-CHIP mutations',
+                       mode='markers',
+                       marker=dict(color=color_group(neutral_traj.filter),
+                                   size=5),
+                       legendgroup=legend_group(neutral_traj.filter),
+                       showlegend=True))
+
+    for part in cohort:
+        for traj in part.trajectories:
+            fig.add_scatter(x=[traj.data.AF.iloc[0]],
+                            y=[traj.gradient],
+                            mode='markers',
+                            marker=dict(color=color_group(traj.filter),
+                                        size=5),
+                            legendgroup=legend_group(traj.filter),
+                            showlegend=False)
+
+            # add inset scatter plot
+            fig.add_scatter(x=[traj.data.AF.iloc[0]],
+                            y=[traj.gradient],
+                            xaxis='x2', yaxis='y2',
+                            mode='markers',
+                            marker=dict(color=color_group(traj.filter),
+                                        size=3),
+                            legendgroup=legend_group(traj.filter),
+                            showlegend=False)
+
+    # Add vertical delimitation of threshold
+    fig.add_trace(
+        go.Scatter(x=[0.02, 0.02], y=[-0.05, 0.1],
+                   name=f'{threshold} VAF threshold',
+                   mode='lines',
+                   line=dict(color=colors[2], width=3, dash='dash')))
+
+    # Add rectangle in zoomed area
+    fig.add_shape(type="rect",
+                  x0=xrange_2[0], y0=yrange_2[0],
+                  x1=xrange_2[1], y1=yrange_2[1],
+                  line=dict(color="Black", width=1))
+
+    fig.update_layout(
+        title=None,
+        template='plotly_white',
+        xaxis=dict(
+            title='VAF',
+            range=[0, 0.35]),
+        yaxis=dict(
+            title='Gradient',
+            range=[-0.017, 0.08]),
+        yaxis2=dict(
+            title=None,
+            tickfont=dict(size=10),
+            range=yrange_2,
+            domain=[0.55, 1],
+            showline=None,
+            linewidth=1,
+            linecolor='black',
+            mirror=True),
+        xaxis2=dict(
+            title=None,
+            tickfont=dict(size=10),
+            range=xrange_2,
+            domain=[0.6, 1],
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            mirror=True)
+    )
+
+    fig.update_layout(legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="left",
+        x=0
+    ))
 
     return fig
 
@@ -512,8 +642,195 @@ def neutral_plot(cohort, neutral, mean_regr, var_regr, n_std=2):
 
     fig.update_layout(title=('Filtering according to '
                              'neutral growth distribution'))
-    fig.update_xaxes(title='VAF', range=[-0.05, 0.35])
+    fig.update_xaxes(title='VAF', range=[0, 0.35])
     fig.update_yaxes(title='Gradient', range=[-0.03, 0.08])
+
+    fig.update_layout(template='plotly_white')
+    fig.update_layout(legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="left",
+        x=0
+    ))
+
+    return fig
+
+
+def neutral_plot_inset(cohort, neutral, mean_regr, var_regr,
+                       n_std=2, xrange_2=[0, 0.03], yrange_2=[-0.01, 0.01]):
+
+    # Find fit and netural trajectories to create group
+    fit_traj = find_fit(cohort)
+    neutral_traj = find_neutral(cohort)
+
+    def legend_group(filter):
+        """Legend group assigns a legend group based on filter attribute"""
+        if filter is True:
+            return 'Fit'
+        else:
+            return 'Neutral'
+
+    def color_group(filter):
+        """ returns a different color based on filter attribute"""
+        if filter is True:
+            return colors[0]
+        else:
+            return colors[3]
+
+    # Create figure with inset
+    fig = make_subplots(insets=[{'cell': (1, 1), 'l': 0.7, 'b': 0.3}])
+
+    # Create trajectories for legend groups
+    # Fit trajectories
+    if fit_traj is not None:
+        fig.add_trace(
+            go.Scatter(x=[fit_traj.data.AF.iloc[0]],
+                       y=[fit_traj.gradient],
+                       name='Fit',
+                       mode='markers',
+                       marker=dict(color=color_group(fit_traj.filter),
+                                   size=5),
+                       legendgroup=legend_group(fit_traj.filter),
+                       showlegend=True))
+
+    # Neutral trajectories label
+    if neutral_traj is not None:
+        fig.add_trace(
+            go.Scatter(x=[neutral_traj.data.AF.iloc[0]],
+                       y=[neutral_traj.gradient],
+                       name='Neutral',
+                       mode='markers',
+                       marker=dict(color=color_group(neutral_traj.filter),
+                                   size=5),
+                       legendgroup='synonymous',
+                       showlegend=True))
+
+    # Synonymous trajectories label:
+    synonymous = neutral[0].trajectories[0]
+    fig.add_trace(
+        go.Scatter(x=[synonymous.data.AF.iloc[0]],
+                   y=[synonymous.gradient],
+                   name='Synonymous',
+                   mode='markers',
+                   marker=dict(color='Orange',
+                               size=5),
+                   legendgroup='synonymous',
+                   showlegend=True))
+
+    for part in cohort:
+        for traj in part.trajectories:
+            fig.add_scatter(x=[traj.data.AF.iloc[0]],
+                            y=[traj.gradient],
+                            mode='markers',
+                            marker=dict(color=color_group(traj.filter),
+                                        size=5),
+                            legendgroup=legend_group(traj.filter),
+                            showlegend=False)
+
+            # add inset scatter plot
+            fig.add_scatter(x=[traj.data.AF.iloc[0]],
+                            y=[traj.gradient],
+                            xaxis='x2', yaxis='y2',
+                            mode='markers',
+                            marker=dict(color=color_group(traj.filter),
+                                        size=3),
+                            legendgroup=legend_group(traj.filter),
+                            showlegend=False)
+    for part in neutral:
+        for traj in part.trajectories:
+            fig.add_scatter(x=[traj.data.AF.iloc[0]],
+                            y=[traj.gradient],
+                            mode='markers',
+                            marker=dict(color='Orange',
+                                        size=3),
+                            legendgroup='synonymous',
+                            showlegend=False)
+
+            # add inset scatter plot
+            fig.add_scatter(x=[traj.data.AF.iloc[0]],
+                            y=[traj.gradient],
+                            xaxis='x2', yaxis='y2',
+                            mode='markers',
+                            marker=dict(color='Orange',
+                                        size=3),
+                            legendgroup='synonymous',
+                            showlegend=False)
+
+    # Add mean and filter lines
+    x = np.linspace(0, 0.5, 1000)
+    y_std = mean_regr.predict(np.c_[x]) \
+        + n_std*np.sqrt(var_regr.predict(np.c_[x]))
+    y_mean = mean_regr.predict(np.c_[x])
+    fig.add_trace(
+        go.Scatter(x=x, y=y_std,
+                   name='Neutral growth filter',
+                   xaxis='x2', yaxis='y2',
+                   legendgroup='filter',
+                   marker=dict(color=colors[1])))
+    fig.add_trace(
+        go.Scatter(x=x, y=y_mean,
+                   name='Neutral growth mean',
+                   xaxis='x2', yaxis='y2',
+                   legendgroup='mean',
+                   marker=dict(color=colors[2])))
+    # Add mean and filter lines to inset
+    fig.add_trace(
+        go.Scatter(x=x, y=y_std,
+                   name='Neutral growth filter',
+                   legendgroup='filter',
+                   showlegend=False,
+                   marker=dict(color=colors[1])))
+    fig.add_trace(
+        go.Scatter(x=x, y=y_mean,
+                   name='Neutral growth mean',
+                   legendgroup='mean',
+                   showlegend=False,
+                   marker=dict(color=colors[2])))
+
+    # Add rectangle in zoomed area
+    fig.add_shape(type="rect",
+                  x0=xrange_2[0], y0=yrange_2[0],
+                  x1=xrange_2[1], y1=yrange_2[1],
+                  line=dict(color="Black", width=1))
+
+    # Update inset layout
+    fig.update_layout(
+        title=None,
+        template='plotly_white',
+        xaxis=dict(
+            title='VAF',
+            range=[0, 0.35]),
+        yaxis=dict(
+            title='Gradient',
+            range=[-0.017, 0.08]),
+        yaxis2=dict(
+            title=None,
+            tickfont=dict(size=10),
+            range=yrange_2,
+            domain=[0.55, 1],
+            showline=None,
+            linewidth=1,
+            linecolor='black',
+            mirror=True),
+        xaxis2=dict(
+            title=None,
+            tickfont=dict(size=10),
+            range=xrange_2,
+            domain=[0.6, 1],
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            mirror=True)
+    )
+
+    fig.update_layout(legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="left",
+        x=0
+    ))
 
     return fig
 
@@ -528,6 +845,7 @@ def model_cohort(cohort):
                     modelling.model(x=traj.data.age.tolist(),
                                     y=traj.data.AF.tolist(),
                                     mutation=traj.mutation,
+                                    variant_class=traj.variant_class,
                                     gene=traj.mutation.split()[0],
                                     id=part.id,
                                     p_key=traj.p_key))

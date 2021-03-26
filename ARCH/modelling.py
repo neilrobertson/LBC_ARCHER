@@ -5,7 +5,10 @@
 
 # import math packages
 import numpy as np
+import pandas as pd
 import random
+from scipy import stats
+from itertools import combinations
 
 # import lmfit packages
 from lmfit import Parameters, Minimizer, minimize
@@ -31,10 +34,12 @@ class model:
     """
 
     # mutation trajectory class for training mp models
-    def __init__(self, x, y, gene, mutation, id, p_key, emcee=False):
+    def __init__(self, x, y, gene, mutation, variant_class, id, p_key,
+                 emcee=False):
         self.x = x
         self.y = y
         self.mutation = mutation
+        self.variant_class = variant_class
         self.gene = gene
         self.id = id
         self.p_key = p_key
@@ -362,15 +367,131 @@ def extended_plot(model_list, mutation):
 
     # Seccond create the dots adding jitter
     for i, item in enumerate(fitness):
-        fig.add_trace(go.Box(y=[item], boxpoints='all', name=mutation,
+        fig.add_trace(go.Box(y=[item], pointpos=-2, boxpoints='all',
+                             name=mutation,
                              jitter=random.uniform(0, 0.5),
-                             width=0.1,
                              marker_color=colors[i % 10-1],
                              line=dict(color='rgba(0,0,0,0)'),
                              fillcolor='rgba(0,0,0,0)',
                              showlegend=False),
                       row=1, col=2)
 
+    fig.update_layout(title=f'{mutation} trajectories')
+    fig.update_xaxes(title_text='Age (in years)', row=1, col=1)
+    fig.update_yaxes(title_text='VAF', row=1, col=1)
+    fig.update_xaxes(showticklabels=False, row=1, col=2)
+    fig.update_yaxes(title_text='Fitness', row=1, col=2)
+
+    return fig
+
+
+def extended_plot_variant(model_list, mutation, var_dict=None):
+    if var_dict is None:
+        var_types = ["3'Flank", "5'Flank", "5'UTR", "Frame_Shift_Del",
+                     "Frame_Shift_Ins", "In_Frame_Ins", "Missense_Mutation",
+                     "Nonsense_Mutation", "Nonstop_Mutation", "Splice_Region",
+                     "Splice_Site"]
+        var_colors = ["#00BBDA", "#E18A00", "#BE9C00", "#8CAB00", "#24B700",
+                      "#00BE70", "#00C1AB", "#F8766D", "#8B93FF", "#D575FE",
+                      "#F962DD"]
+
+        var_zip = zip(var_types, var_colors)
+        var_dict = dict(var_zip)
+
+    model_filtered = [traj for traj in model_list
+                      if traj.gene == mutation
+                      and traj.nelder.params['fitness'] > 0]
+                      # and traj.nelder.aic < -10] add aic filter
+
+    if model_filtered[0].model_type == '3-parameter exponential model':
+        def prediction(params, x):
+            return exponential_residual(params, x, 0)
+
+    elif model_filtered[0].model_type == '2-parameter exponential model':
+        def prediction(params, x):
+            return exponential_residual_2(params, x, 0)
+
+    fig = make_subplots(rows=1, cols=2,
+                        column_widths=[0.7, 0.3],
+                        subplot_titles=(model_filtered[0].model_type,
+                                        'Fitness distribution'))
+
+    # Create legend groups
+    traj = model_filtered[0]
+    x_label = np.linspace(70, 71, 2)
+    y_label = prediction(traj.nelder.params, x_label)
+
+    fig.add_trace(
+        go.Scatter(x=[traj.x[0]], y=[traj.y[0]],
+                   mode='markers',
+                   marker=dict(color='Grey'),
+                   legendgroup="group",
+                   name="Data points"),
+        row=1, col=1)
+
+    fig.add_trace(
+        go.Scatter(x=x_label, y=y_label,
+                   mode='lines', line=dict(color='Grey'),
+                   legendgroup="group",
+                   name="Fitted trajectories"),
+        row=1, col=1)
+
+    fitness = []  # create the list of fitness to use in boxplot
+    fitness_variant = []
+    # Create a trace for each traject
+    for i, traj in enumerate(model_filtered):
+        x_line = np.linspace(65, 95, 100)
+        y_fit = prediction(traj.nelder.params, x_line)
+        fitness_variant.append(traj.variant_class)
+        fig.add_trace(
+            go.Scatter(x=traj.x, y=traj.y,
+                       name=traj.mutation,
+                       legendgroup="group2",
+                       showlegend=False,
+                       mode='markers',
+                       line=dict(color=var_dict[traj.variant_class])),
+            row=1, col=1)
+
+        fig.add_trace(
+            go.Scatter(x=x_line, y=y_fit,
+                       name='fit', legendgroup='group2',
+                       showlegend=False,
+                       line=dict(color=var_dict[traj.variant_class])),
+            row=1, col=1)
+        fitness.append(traj.nelder.params['fitness'])  # append fitness to list
+
+    # box plot with fitness estimates
+    # Frist create the box
+    fig.add_trace(
+        go.Box(y=fitness, boxpoints=False,
+               name=mutation, marker_color=colors[0],
+               showlegend=False),
+        row=1, col=2)
+
+    # Seccond create the dots adding jitter
+    for i, item in enumerate(fitness):
+        fig.add_trace(
+            go.Box(y=[item], pointpos=-2, boxpoints='all',
+                   name=mutation,
+                   jitter=random.uniform(0, 0.5),
+                   marker_color=var_dict[fitness_variant[i]],
+                   line=dict(color='rgba(0,0,0,0)'),
+                   fillcolor='rgba(0,0,0,0)',
+                   showlegend=False),
+            row=1, col=2)
+
+    fitness_variant = list(set(fitness_variant))
+    for key in fitness_variant:
+        for traj in model_filtered:
+            if traj.variant_class == key:
+                fig.add_trace(
+                    go.Scatter(x=traj.x,
+                               y=traj.y,
+                               name=key,
+                               mode='markers',
+                               line=dict(color=var_dict[key]),
+                               legendgroup="group2"))
+                break
     fig.update_layout(title=f'{mutation} trajectories')
     fig.update_xaxes(title_text='Age (in years)', row=1, col=1)
     fig.update_yaxes(title_text='VAF', row=1, col=1)
@@ -413,9 +534,53 @@ def gene_box(cohort, order='mean'):
     fig.update_layout(title='Gene distribution of filtered mutations',
                       yaxis_title='Fitness',
                       template="simple_white")
-    return fig
+    fig.update_yaxes(type='log', range=[-2,0.5])
+    fig.update_layout(
+        xaxis_tickangle=-45,
+        yaxis=dict(tickmode='linear', dtick=1))
+    return fig, gene_dict
 
+def gene_statistic (gene_dict, statistic='kurskal'):
+    """ compute a statistical test to find significant differences in the
+    distribution of fitness by gene.
+    statistic parameter accepts: 'kruskal' or 'anova'.
+    Returns:
+    * heatmap with significant statistical differences.
+    * dataframe."""
+    # extract all possible gene combinations
+    gene_list = []
+    for gene in gene_dict.keys():
+        if len(gene_dict[gene]) > 2:
+            gene_list.append(gene)
 
+    # Create dataframe to store statistics
+    test_df = pd.DataFrame(index=gene_list, columns=gene_list)
+    for gene1, gene2 in combinations(gene_list, 2):
+        # compute statistic for each possible comination of genes
+        if statistic == 'kurskal':
+            stat, pvalue = stats.kruskal(gene_dict[gene1], gene_dict[gene2])
+        if statistic == 'anova':
+            stat, pvalue = stats.f_oneway(gene_dict[gene1], gene_dict[gene2])
+        # if statistic is significant store value in dataframe
+        if pvalue < 0.05:
+            test_df.loc[gene1, gene2] = stat
+
+    # Clean dataset from nan
+
+    test_df = test_df.dropna(how='all', axis=1)
+    test_df = test_df.dropna(how='all', axis=0)
+    test_df = test_df.reindex(index=test_df.index[::-1])
+    y = test_df.index
+    x = test_df.columns
+    fig = go.Figure(data=go.Heatmap(
+                       z=np.array(test_df),
+                       x=x,
+                       y=y))
+    fig.update_xaxes(side="top", mirror=True)
+    fig.update_yaxes(side='top', mirror=True)
+    fig.update_layout(template='simple_white')
+
+    return fig, test_df
 #
 # """Logistic model fit functions"""
 #

@@ -151,13 +151,16 @@ def plot_VAF(result):
     # Add a trajectory for labeling
     fig.add_trace(
         go.Scatter(x=[70], y=[0], mode='lines',
-                   legendgroup="Mutation trajectory",
-                   name="Mutation trajectory"))
+                   marker_color='rgb(204,204,204)',
+                   legendgroup="Neutral trajectory",
+                   name="Neutral mutation"))
 
     for traj in result:
         fig.add_trace(
-            go.Scatter(x=traj['time'], y=traj['VAF'], mode='lines',
-                       legendgroup="Mutation trajectory", showlegend=False))
+            go.Scatter(x=traj['time'], y=traj['VAF'],
+                       marker_color='rgb(204,204,204)',
+                       mode='lines',
+                       legendgroup="Neutral trajectory", showlegend=False))
     fig.update_layout(
         title="Simulation of neutral fitness mutations",
         xaxis_title="Time (age)",
