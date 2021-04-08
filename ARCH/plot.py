@@ -51,6 +51,52 @@ def stack_plot(participant, norm=True):
     return fig
 
 
+def synonymous_profile(part_lbc, syn):
+
+    fig = go.Figure()
+    # Plot non-synonymous trajectory for legend
+    traj = part_lbc.trajectories[0]
+    fig.add_trace(
+            go.Scatter(x=traj.data.age,
+                       y=traj.data.AF,
+                       marker_color=colors[0],
+                       opacity=0.3,
+                       name='Non-Synonymous variant',
+                       legendgroup='Non-synonymous variant'))
+    # Plot all non-synonymous trajectories
+    for traj in part_lbc.trajectories:
+        fig.add_trace(
+            go.Scatter(x=traj.data.age,
+                       y=traj.data.AF,
+                       marker_color=colors[0],
+                       opacity=0.3,
+                       showlegend=False,
+                       legendgroup='Non-synonymous variant'))
+    # Find synonymous trajectories of participant
+    for part in syn:
+        if part.id == part_lbc.id:
+            # Plot synonymous trajectory for legend
+            traj = part.trajectories[0]
+            fig.add_trace(
+                go.Scatter(x=traj.data.age,
+                           y=traj.data.AF,
+                           marker_color='Orange',
+                           name='Synonymous variant',
+                           legendgroup='Synonymous variant'))
+            # Plot all synonymous trajectories
+            for traj in part.trajectories:
+                fig.add_trace(
+                    go.Scatter(x=traj.data.age,
+                               y=traj.data.AF,
+                               marker_color='Orange',
+                               showlegend=False,
+                               legendgroup='Synonymous variant'))
+    fig.update_layout(title='Synonymous mutations',
+                      template='plotly_white')
+
+    return fig
+
+
 """ Plotting functions for mutation trajectories"""
 
 
@@ -149,7 +195,7 @@ def local_gardients(cohort, mutations):
 """ Comparing fitness with Protein damage prediction"""
 
 
-def damage_class(model, fs_damage=1, termination_damage=1):
+def damage_class(model, split=True, fs_ter_damage=1):
     """ Box plot of variant predicted protein damage class ~ Fitness.
     Returns:
     * Box plot
@@ -176,37 +222,62 @@ def damage_class(model, fs_damage=1, termination_damage=1):
     for traj in damage_model:
         if traj.p_key in set(df['p_key']):
             traj.damage = df.loc[df.p_key == traj.p_key, 'damaging'].values[0]
-        elif 'fs' in traj.p_key:
-            traj.damage = fs_damage
-        elif '*' in traj.p_key:
-            traj.damage = termination_damage
+        elif (split is False) and ('fs' in traj.p_key or '*' in traj.p_key):
+            traj.damage = fs_ter_damage
         else:
             traj.damage = -2
+
+    # Split trajectories by damage 1, 0, -1
     damaging_var = []
     possibly_var = []
     benign_var = []
     for traj in damage_model:
-        if traj.fitness > 0:
-            if traj.damage == 1:
-                damaging_var.append(traj.nelder.params['fitness'])
-            elif traj.damage == 0:
-                possibly_var.append(traj.nelder.params['fitness'])
-            elif traj.damage == -1:
-                benign_var.append(traj.nelder.params['fitness'])
+        # if traj.fitness > 0: uncomment to drop unfit trajectories.
+        if traj.damage == 1:
+            damaging_var.append(traj.fitness)
+        elif traj.damage == 0:
+            possibly_var.append(traj.fitness)
+        elif traj.damage == -1:
+            benign_var.append(traj.fitness)
+
+    # Box plot of fitness by damage class
     fig = go.Figure()
     fig.add_trace(
-        go.Box(y=damaging_var, name='Likely damaging', boxpoints='all'))
+        go.Box(y=damaging_var,
+               name='Likely damaging',
+               boxpoints='all',
+               marker_color='Grey',
+               showlegend=False))
     fig.add_trace(
-        go.Box(y=possibly_var, name='Possibly damaging', boxpoints='all'))
+        go.Box(y=possibly_var,
+               name='Possibly damaging',
+               boxpoints='all',
+               marker_color='Grey',
+               showlegend=False))
     fig.add_trace(
-        go.Box(y=benign_var, name='Likely benign', boxpoints='all'))
-    fig.update_yaxes(title='Fitness', type='log', dtick=1)
+        go.Box(y=benign_var,
+               name='Likely benign',
+               boxpoints='all',
+               marker_color='Grey',
+               showlegend=False))
+    if split is True:
+        fs_ter = []
+        for traj in damage_model:
+            if 'fs' in traj.p_key or '*' in traj.p_key:
+                fs_ter.append(traj.fitness)
+        fig.add_trace(
+            go.Box(y=fs_ter,
+                   name='Frameshit of termination',
+                   boxpoints='all',
+                   marker_color='Grey',
+                   showlegend=False))
+    fig.update_yaxes(title='Fitness')
 
     return fig, damage_model
 
 
-def damage_score(model, fs_score=-1, termination_score=-1,
-                 unknown_score=-1):
+def damage(model, fs_score=-1, termination_score=-1,
+           unknown_score=-1):
     """ Scatter plot of variant predicted protein damage ~ Fitness
         Returns:
         * Scatter plot
@@ -237,46 +308,69 @@ def damage_score(model, fs_score=-1, termination_score=-1,
     # Exclude trajectories without a p_key
     damage_model = [traj for traj in model if isinstance(traj.p_key, str)]
 
-    # Assign damage to trajectories
+    # Assign damage score to trajectories
     for traj in damage_model:
         if traj.p_key in set(df['p_key']):
-            traj.damage = df.loc[df.p_key == traj.p_key, 'score'].values[0]
+            traj.damage_score = df.loc[df.p_key == traj.p_key,
+                                       'score'].values[0]
         elif 'fs' in traj.p_key:
-            traj.damage = fs_score
+            traj.damage_score = fs_score
         elif '*' in traj.p_key:
-            traj.damage = termination_score
+            traj.damage_score = termination_score
         else:
-            traj.damage = unknown_score
-        damaging_var = []
-        possibly_var = []
-        benign_var = []
-        for traj in damage_model:
-            if traj.fitness > 0:
-                if traj.damage == 1:
-                    damaging_var.append(traj.nelder.params['fitness'])
-                elif traj.damage == 0:
-                    possibly_var.append(traj.nelder.params['fitness'])
-                elif traj.damage == -1:
-                    benign_var.append(traj.nelder.params['fitness'])
+            traj.damage_score = unknown_score
 
+    # Scatter plot of fitness vs score
     fitness = []
     damage = []
-    fig = go.Figure()
+    scatter_fig = go.Figure()
     for traj in damage_model:
-        if 0 < traj.damage < 1:
-            fig.add_trace(
-                go.Scatter(x=[traj.fitness], y=[traj.damage],
+        if 0 < traj.damage_score <= 1:
+            scatter_fig.add_trace(
+                go.Scatter(x=[traj.fitness], y=[traj.damage_score],
                            marker_color=colors[0],
                            showlegend=False))
             fitness.append(traj.fitness)
-            damage.append(traj.damage)
+            damage.append(traj.damage_score)
 
     tau, p_value = stats.kendalltau(fitness, damage)
 
-    fig.update_layout(
+    scatter_fig.update_layout(
         xaxis_title='Fitness',
         yaxis_title='damage prediction',
         title=(f'Fitness ~ damage prediction: '
                f'tau: {round(tau,2)} p-value: {round(p_value,3)}'))
 
-    return fig, damage_model
+    # Split trajectories by damage calss 1, 0, -1
+    damaging_var = []
+    possibly_var = []
+    benign_var = []
+    for traj in damage_model:
+        if traj.damage_score == 1:
+            damaging_var.append(traj.nelder.params['fitness'])
+            traj.damage_class = 'Likely damaging'
+        elif traj.damage_score == 0:
+            possibly_var.append(traj.nelder.params['fitness'])
+            traj.damage_class = 'Possibly damaging'
+        elif traj.damage_score == -1:
+            benign_var.append(traj.nelder.params['fitness'])
+            traj.damage_class = 'Likely benign'
+        else:
+            traj.damage_class = 'Unknown'
+
+    # Box plot of fitness by damage class
+    box = go.Figure()
+    box.add_trace(
+        go.Box(y=damaging_var, name='Likely damaging',
+               boxpoints='all', marker_color='rgb(102,102,102)'))
+    box.add_trace(
+        go.Box(y=possibly_var, name='Possibly damaging',
+               boxpoints='all', marker_color='rgb(102,102,102)'))
+    box.add_trace(
+        go.Box(y=benign_var, name='Likely benign',
+               boxpoints='all', marker_color='rgb(102,102,102)'))
+
+    box.update_yaxes(title='Fitness')
+    box.update_layout(showlegend=False)
+
+    return scatter_fig, box, damage_model

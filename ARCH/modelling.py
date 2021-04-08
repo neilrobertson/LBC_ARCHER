@@ -56,7 +56,7 @@ def exponential(t, neutral_cells, fitness, origin):
     return clone_size / (2*total_cells)
 
 
-def exponential_fit(self):
+def exponential_fit(self, neutral_cells=10000):
     """Fit an exponentially growing population of cells to a VAF
     trajectory.
 
@@ -83,7 +83,7 @@ def exponential_fit(self):
         value = np.random.normal(-0.1, 0.01)
         p.add('fitness', value=value, vary=False)
 
-    p.add('neutral_cells', value=500, min=1)
+    p.add('neutral_cells', value=neutral_cells, min=1)
     p.add('origin', value=50, min=0, max=80)
 
     # step 1: Crete Minimizer object model
@@ -189,6 +189,128 @@ def exponential_residual_2(p, x, y):
     v = p.valuesdict()
     VAF_value = exponential_2(np.array(x), v['auxiliary'], v['fitness'])
     return VAF_value - np.array(y)
+
+
+""" Exponential model fitted in bulk by participant"""
+
+
+def exponential_cells(time, fitness, origin):
+    """ Returns the number of cell of an exponentially growing trajectory.
+    The function inputs are
+    time: time point for evaluation.
+    fitness: growth speed of the family of cells.
+    origin: time of origin of the family of cells."""
+    return np.exp(fitness*(time-origin))
+
+
+def participant_fit(part, neutral_cells=10000, rate=2.42):
+    """ Fits an exponential model of clonal growth in bulk for all
+    fit trajectories in a participant. Trajectories share a
+    neutral_cell parameter, and the total number of cells is updated
+    with the growth of each trajectory.
+    The following attributes are added for each trajectory in part:
+    - nelder: lmfit Nelder model.
+    - fitness, origin and neutral cells parameters.
+    - data_vaf and model_vaf: dictionaries containing data and model
+      predictions as a function of time.
+    - vaf_plot: dictionary contianing model predictions for plotting."""
+
+    # Initialize model parameters
+    p = Parameters()
+    for i, traj in enumerate(part):
+        p.add('fitness_%i' % i, value=rate*5/100, min=0, max=rate/3)
+        p.add('neutral_cells_%i' % i, value=neutral_cells,
+              min=neutral_cells/10, max=neutral_cells*10)
+        p.add('origin_%i' % i, value=0, min=0, max=traj.x[0])
+
+    # force all neutral_cells parameters equal
+    if len(part) > 1:
+        for i in range(1, len(part)):
+            p['neutral_cells_%i' % i].expr = 'neutral_cells_0'
+
+    # fit the data using lmfit 'minimize' function
+    model = Minimizer(joint_exponential_residual, p, fcn_args=(part,))
+    nelder = model.minimize(method='nelder')
+
+    # update traj fitness
+    for i, traj in enumerate(part):
+        traj.fitness = nelder.params['fitness_%i' % i]*1
+        traj.neutral_cells = int(nelder.params['neutral_cells_%i' % i]*1)
+        traj.origin = nelder.params['origin_%i' % i]*1
+        traj.nelder = nelder
+        data_vaf = np.array(list(traj.data_vaf.values()))
+        model_vaf = np.array(list(traj.model_vaf.values()))
+        traj.r2 = np.linalg.norm(data_vaf-model_vaf)
+
+    time = np.linspace(65, 95, 1000)
+    for traj in part:
+        traj.vaf_plot = dict.fromkeys(time)
+
+    for x in time:
+        traj_cells = []
+        for traj in part:
+            traj_cells.append(exponential_cells(x, traj.fitness, traj.origin))
+        total_cells = part[0].neutral_cells + sum(traj_cells)
+        for i, traj in enumerate(part):
+            traj.vaf_plot[x] = traj_cells[i]/(2*total_cells)
+
+
+def joint_exponential_residual(p, participant):
+    """ Computes a residual for minimization.
+    For each timepoint:
+    Step 1 - compute the number of cells at timepoint in each trajectory:
+             traj_cells
+    Step 2 - update total number of cells in the participant at time point as
+             total_cells = neutral_cells + cells in each trajectory.
+    Step 3 - compute the VAF for each trajectory at timepoint as
+             traj_vaf = traj_cells / (2*total_cells)
+    returns: sum of squared errors for each data point in each trajectory.
+    """
+
+    # Initialize dictionaries for data and model_predictions
+    # in each time point
+    for traj in participant:
+        traj.data_vaf = dict(zip(traj.x, traj.y))
+        traj.model_vaf = dict.fromkeys(traj.x)
+
+    # Extract all fitted time_points in trajectories
+    # Note, there can be time_points present only i one trajectory
+    time_points = []
+    for traj in participant:
+        for x in traj.x:
+            time_points.append(x)
+    # remove duplicate values
+    time_points = list(set(time_points))
+
+    # compute VAF of trajectories at each time_point
+    for time in time_points:
+        # Create a list of the number of cells in each variant at time x
+        traj_cells = []
+        for i, traj in enumerate(participant):
+            traj_cells.append(
+                exponential_cells(time,
+                                  p['fitness_%i' % i],
+                                  p['origin_%i' % i]))
+
+        # compute the total number of cells present in the system
+        # note that we take the integer of parameter neutral cells
+        total_cells = int(p['neutral_cells_0']) + sum(traj_cells)
+
+        # compute the vaf of each trajectory at time x
+        traj_vaf = np.array(traj_cells) / (2*total_cells)
+
+        for i, traj in enumerate(participant):
+            if time in traj.model_vaf.keys():
+                traj.model_vaf[time] = traj_vaf[i]
+
+    # compute the error for each trajectory on each time_point
+    residual = []
+    for traj in participant:
+        for key in traj.data_vaf.keys():
+            residual.append(traj.data_vaf[key] - traj.model_vaf[key])
+
+    # return the array that needs minimizing
+    return residual
 
 
 """ Auxiliary plotting functions"""
@@ -299,8 +421,7 @@ def extended_plot(model_list, mutation):
 
     model_filtered = [model for model in model_list
                       if model.gene == mutation
-                      and model.nelder.params['fitness'] > 0
-                      and model.nelder.aic < -10]
+                      and model.nelder.params['fitness'] > 0]
 
     if model_filtered[0].model_type == '3-parameter exponential model':
         def prediction(params, x):
@@ -385,6 +506,68 @@ def extended_plot(model_list, mutation):
     return fig
 
 
+def participant_model_plot(model_list, id):
+    """ Returns scatter plot of data and model predictions
+    of fit trajectories in a participant"""
+
+    part = []
+    for traj in model_list:
+        if traj.id == id:
+            part.append(traj)
+    if len(part) == 0:
+        return go.Figure()
+
+    # Extract min and max time
+    min_time = []
+    max_time = []
+    for traj in part:
+        min_time.append(min(list(traj.data_vaf.keys())))
+        max_time.append(max(list(traj.data_vaf.keys())))
+    min_time = min(min_time)
+    max_time = min(max_time)
+
+
+    fig = go.Figure()
+    for i, traj in enumerate(part):
+        x = list(traj.data_vaf.keys())
+        y = list(traj.data_vaf.values())
+        fig.add_trace(
+            go.Scatter(x=x, y=y,
+                       mode='markers',
+                       marker_color=colors[i % 10],
+                       name=traj.mutation))
+        # x_prediction = list(traj.vaf_plot.keys())
+        # y_prediction = list(traj.vaf_plot.values())
+        x_prediction = [time
+                        for time in list(traj.vaf_plot.keys())
+                        if min_time - 3 < time < max_time + 3]
+        y_prediction = [traj.vaf_plot[time]
+                        for time in list(traj.vaf_plot.keys())
+                        if min_time - 3 < time < max_time + 3]
+        fig.add_trace(
+            go.Scatter(x=x_prediction,
+                       y=y_prediction, mode='lines',
+                       marker_color=colors[i % 10],
+                       text=(f'id: {traj.id}<br>'
+                             f'fitness: {round(traj.fitness,3)}<br>'
+                             f'origin: {round(traj.origin,3)}<br>'
+                             f'r2: {round(traj.r2,3)}<br>'
+                             f'pearson: {round(traj.pearson[0],1)}'),
+                       name=traj.mutation))
+    fig.update_layout(
+        title=(f'Trajectory fit of participant {part[0].id} <br>'
+               f'aic: {int(traj.nelder.aic)}'),
+        xaxis_title='Age (in years)',
+        yaxis_title='VAF')
+
+
+
+    #fig.update_xaxes(range=[min_time - 3, max_time + 3])
+
+
+    return fig
+
+
 def extended_plot_variant(model_list, mutation, var_dict=None):
     if var_dict is None:
         var_types = ["3'Flank", "5'Flank", "5'UTR", "Frame_Shift_Del",
@@ -401,7 +584,6 @@ def extended_plot_variant(model_list, mutation, var_dict=None):
     model_filtered = [traj for traj in model_list
                       if traj.gene == mutation
                       and traj.nelder.params['fitness'] > 0]
-                      # and traj.nelder.aic < -10] add aic filter
 
     if model_filtered[0].model_type == '3-parameter exponential model':
         def prediction(params, x):
@@ -501,10 +683,83 @@ def extended_plot_variant(model_list, mutation, var_dict=None):
     return fig
 
 
-def gene_box(cohort, order='mean'):
+def gene_trajectories(model_list, gene):
+
+    var_types = ["3'Flank", "5'Flank", "5'UTR", "Frame_Shift_Del",
+                 "Frame_Shift_Ins", "In_Frame_Ins", "Missense_Mutation",
+                 "Nonsense_Mutation", "Nonstop_Mutation", "Splice_Region",
+                 "Splice_Site"]
+    var_colors = ["#00BBDA", "#E18A00", "#BE9C00", "#8CAB00", "#24B700",
+                  "#00BE70", "#00C1AB", "#F8766D", "#8B93FF", "#D575FE",
+                  "#F962DD"]
+
+    var_zip = zip(var_types, var_colors)
+    var_dict = dict(var_zip)
+
+    fig = make_subplots(rows=1, cols=2,
+                        column_widths=[0.7, 0.3],
+                        subplot_titles=(f'{gene} trajectories',
+                                        'Fitness distribution'))
+    fitness_color = []
+    fitness = []
+    for traj in model_list:
+        if traj.gene == gene:
+            x = list(traj.data_vaf.keys())
+            y = list(traj.data_vaf.values())
+            fig.add_trace(
+                go.Scatter(x=x, y=y,
+                           mode='markers',
+                           marker_color=var_dict[traj.variant_class],
+                           name=traj.mutation,
+                           showlegend=False),
+                row=1, col=1)
+            x_prediction = list(traj.vaf_plot.keys())
+            y_prediction = list(traj.vaf_plot.values())
+            fig.add_trace(
+                go.Scatter(x=x_prediction,
+                           y=y_prediction, mode='lines',
+                           marker_color=var_dict[traj.variant_class],
+                           showlegend=False,
+                           text=(f'fitness: {round(traj.fitness,3)}<br>'
+                                 f'origin: {round(traj.origin,3)}<br>'
+                                 f'r2: {round(traj.r2,3)}'),
+                           name=traj.mutation),
+                row=1, col=1)
+            fitness.append(traj.fitness)
+            fitness_color.append(var_dict[traj.variant_class])
+
+    # box plot with fitness estimates
+    # Frist create the box
+    fig.add_trace(
+        go.Box(y=fitness, boxpoints=False,
+               name=gene,
+               marker_color='Grey',
+               showlegend=False),
+        row=1, col=2)
+
+    # Seccond create the dots adding jitter
+    for i, item in enumerate(fitness):
+        fig.add_trace(
+            go.Box(y=[item], pointpos=-2, boxpoints='all',
+                   name=gene,
+                   jitter=random.uniform(0, 0.2),
+                   marker_color=fitness_color[i],
+                   line=dict(color='rgba(0,0,0,0)'),
+                   fillcolor='rgba(0,0,0,0)',
+                   showlegend=False),
+            row=1, col=2)
+
+    fig.update_xaxes(title_text='Age (in years)', row=1, col=1)
+    fig.update_yaxes(title_text='VAF', row=1, col=1)
+    fig.update_xaxes(showticklabels=False, row=1, col=2)
+    fig.update_yaxes(title_text='Fitness', row=1, col=2)
+
+    return fig
+
+
+def gene_box(cohort, order='median', percentage=False):
     """Box plot with counts of filtered mutations by gene. Returns a figure."""
 
-    cohort = [item for item in cohort if item.fitness > 0]
     # Create a dictionary with all filtered genes
     gene_list = []
     for traj in cohort:
@@ -512,35 +767,50 @@ def gene_box(cohort, order='mean'):
     gene_dict = {element: [] for element in set(gene_list)}
 
     # update the counts for each gene
-    for traj in cohort:
-        fitness = traj.nelder.params['fitness']*1
-        gene_dict[traj.gene].append(fitness)
+    if percentage is False:
+        y_label = 'Fitness'
+        for traj in cohort:
+            fitness = traj.fitness
+            gene_dict[traj.gene].append(fitness)
+    if percentage is True:
+        y_label = 'fitness_percentage'
+        for traj in cohort:
+            fitness = traj.fitness_percentage
+            gene_dict[traj.gene].append(fitness)
     # sort dictionary in descending order
     if order == 'mean':
         gene_dict = dict(sorted(gene_dict.items(),
                                 key=lambda item: np.mean(item[1]),
                                 reverse=True))
 
+    if order == 'median':
+        gene_dict = dict(sorted(gene_dict.items(),
+                                key=lambda item: np.median(item[1]),
+                                reverse=True))
     if order == 'max':
         gene_dict = dict(sorted(gene_dict.items(),
                                 key=lambda item: np.max(item[1]),
                                 reverse=True))
     # Bar plot
     fig = go.Figure()
-    for key in gene_dict:
+    color_dict = dict()
+    for i, key in enumerate(gene_dict):
+        color_dict[key] = colors[i % 10]
         fig.add_trace(
             go.Box(y=gene_dict[key],
+                   marker_color=color_dict[key],
                    name=key, boxpoints='all', showlegend=False))
-    fig.update_layout(title='Gene distribution of filtered mutations',
-                      yaxis_title='Fitness',
-                      template="simple_white")
-    fig.update_yaxes(type='log', range=[-2,0.5])
-    fig.update_layout(
-        xaxis_tickangle=-45,
-        yaxis=dict(tickmode='linear', dtick=1))
-    return fig, gene_dict
 
-def gene_statistic (gene_dict, statistic='kurskal'):
+    fig.update_layout(title='Gene distribution of filtered mutations',
+                      yaxis_title=y_label,
+                      template="simple_white")
+    if percentage is False:
+        fig.update_yaxes(type='log', tickvals=[0.05, 0.1, 0.2, 0.4])
+    fig.update_layout(xaxis_tickangle=-45)
+    return fig, gene_dict, color_dict
+
+
+def gene_statistic(gene_dict, statistic='kruskal-walllis', filter=True):
     """ compute a statistical test to find significant differences in the
     distribution of fitness by gene.
     statistic parameter accepts: 'kruskal' or 'anova'.
@@ -557,7 +827,7 @@ def gene_statistic (gene_dict, statistic='kurskal'):
     test_df = pd.DataFrame(index=gene_list, columns=gene_list)
     for gene1, gene2 in combinations(gene_list, 2):
         # compute statistic for each possible comination of genes
-        if statistic == 'kurskal':
+        if statistic == 'kruskal-wallis':
             stat, pvalue = stats.kruskal(gene_dict[gene1], gene_dict[gene2])
         if statistic == 'anova':
             stat, pvalue = stats.f_oneway(gene_dict[gene1], gene_dict[gene2])
@@ -566,21 +836,114 @@ def gene_statistic (gene_dict, statistic='kurskal'):
             test_df.loc[gene1, gene2] = stat
 
     # Clean dataset from nan
+    if filter is True:
+        test_df = test_df.dropna(how='all', axis=1)
+        test_df = test_df.dropna(how='all', axis=0)
 
-    test_df = test_df.dropna(how='all', axis=1)
-    test_df = test_df.dropna(how='all', axis=0)
     test_df = test_df.reindex(index=test_df.index[::-1])
     y = test_df.index
     x = test_df.columns
     fig = go.Figure(data=go.Heatmap(
                        z=np.array(test_df),
                        x=x,
-                       y=y))
+                       y=y,
+                       colorscale='Cividis',
+                       colorbar=dict(title=f'{statistic} score')))
     fig.update_xaxes(side="top", mirror=True)
     fig.update_yaxes(side='top', mirror=True)
     fig.update_layout(template='simple_white')
 
     return fig, test_df
+
+
+def damage_class(model, fs_ter='fs - ter',
+                 color_list=None, plot_color=colors[0]):
+    """ Box plot of variant predicted protein damage class ~ Fitness.
+    Returns:
+    * Box plot
+    * Modified model with damage_class attribute."""
+
+    # Load dataset with prediction damage
+    xls = pd.ExcelFile('Datasets/new_kristina_variants.xlsx')
+    df = pd.DataFrame(columns=['p_key', 'damaging'])
+
+    damaging_dict = {1: 'likely damaging',
+                     0: 'possibly damaging',
+                     -1: 'likely benign'}
+    # Access each sheet of xls file
+    for name in xls.sheet_names:
+        df_temp = pd.read_excel(xls, name)
+        # replace integer for damage_class
+        for key, value in damaging_dict.items():
+            df_temp['Likely damaging'] = (df_temp['Likely damaging'].
+                                          replace(key, value))
+
+        # Extract p_key and damage class
+        p_keys = name + ' p.' + df_temp.iloc[:, 0]
+        damaging = df_temp['Likely damaging']
+        for i, j in zip(p_keys, damaging):
+            df = df.append({'p_key': i, 'damaging': j}, ignore_index=True)
+
+    # Exclude trajectories in model without a p_key
+    damage_model = [traj for traj in model if isinstance(traj.p_key, str)]
+
+    # Assign damage to trajectories
+    for traj in damage_model:
+        if traj.p_key in set(df['p_key']):
+            traj.damage_class = df.loc[df.p_key == traj.p_key,
+                                       'damaging'].values[0]
+        elif 'fs' in traj.p_key or '*' in traj.p_key:
+            traj.damage_class = fs_ter
+        else:
+            traj.damage_class = None
+
+    # filter trajectories in model without damage_class
+    damage_model = [traj for traj in damage_model
+                    if traj.damage_class is not None]
+
+    # Create dataframe for plotting
+    df = pd.DataFrame(columns=['damage_class', 'fitness'])
+    for traj in damage_model:
+        df = df.append({'damage_class': traj.damage_class,
+                        'fitness': traj.fitness*1}, ignore_index=True)
+
+    # order df by damage class in a specific order
+    df.damage_class = pd.Categorical(df.damage_class,
+                                     categories=['likely benign',
+                                                 'possibly damaging',
+                                                 'likely damaging',
+                                                 'fs - ter'],
+                                     ordered=True)
+
+    df.sort_values('damage_class', inplace=True)
+
+    # Start subplot figure with shared xaxis
+    fig = make_subplots(rows=2, cols=1,
+                        row_heights=[0.5, 0.5],
+                        shared_xaxes=True,
+                        vertical_spacing=0.05)
+
+    fig.add_trace(
+        go.Histogram(x=df['damage_class'],
+                     marker_color=plot_color,
+                     showlegend=False),
+        row=1, col=1)
+
+    fig.add_trace(
+        go.Box(x=df['damage_class'],
+               y=df['fitness'],
+               marker_color=plot_color,
+               boxpoints=False,
+               showlegend=False),
+        row=2, col=1)
+
+    fig.update_layout(
+        template='simple_white',
+        boxmode='group'
+    )
+    fig.update_yaxes(title='fitness', type='log', dtick=1, row=2, col=1)
+    fig.update_yaxes(title='trajectory counts', row=1, col=1)
+    return fig
 #
 # """Logistic model fit functions"""
 #

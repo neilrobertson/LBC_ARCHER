@@ -90,7 +90,9 @@ def neutral_filter(cohort, neutral, n_std=2):
     return filter_class
 
 
-def neutral_distribution(syn, n_std=2):
+def neutral_distribution(syn, n_std=2,
+                         mean_color=colors[2], var_color=colors[1],
+                         bin_color='rgb(102,102,102)', bar_color='darkorange'):
     """ Find the distribution of gradients of neutral mutations
     Returns:
     - mean regressor
@@ -115,7 +117,7 @@ def neutral_distribution(syn, n_std=2):
     # lack of data below this threshold alters the distribution of gradients
     filtered_melt_syn = melt_syn[melt_syn['AF'] > 0.01]
     # Create bins
-    filtered_melt_syn['bin'] = pd.cut(filtered_melt_syn['AF'], 25)
+    filtered_melt_syn['bin'] = pd.cut(filtered_melt_syn['AF'], 25).copy()
     # Variance and mean with bootstrap for linear regression and plotting
 
     bin_center = []     # track bin centers
@@ -149,10 +151,6 @@ def neutral_distribution(syn, n_std=2):
     var_low = [x[0] for x in full]
     var_high = [x[1] for x in full]
 
-    # Weighted linear regression on mean and variance ~ VAF
-    # for n, i in enumerate(bin_size):
-    #     if i < 10:
-    #         bin_size[n] = 0
     size_weight = np.array(bin_size)
 
     # Mean weighted model
@@ -163,13 +161,16 @@ def neutral_distribution(syn, n_std=2):
     # Mean model figure
     mean_fig = px.scatter(x=bin_center, y=mean, hover_data=[bin_size],
                           error_y=mean_high, error_y_minus=mean_low)
+
     # trace mean linear fit
     x = [0, max(bin_center)]
     mean_fig.add_trace(
         go.Scatter(x=x, y=mean_regr.predict(np.c_[x]),
+                   marker_color=mean_color,
                    name='linear regression fit'))
     mean_fig.update_layout(title=('Linear regression gradient ~ VAF <br>'
-                                  f'R2 score: {round(mean_score,3)}'))
+                                  f'R2 score: {round(mean_score,3)}'),
+                           template='plotly_white')
     mean_fig.update_xaxes(title='VAF')
     mean_fig.update_yaxes(title='Gradient')
 
@@ -185,9 +186,11 @@ def neutral_distribution(syn, n_std=2):
     x = [0, max(bin_center)]
     var_fig.add_trace(
         go.Scatter(x=x, y=var_regr.predict(np.c_[x]),
+                   marker_color=var_color,
                    name='Linear regression fit'))
     var_fig.update_layout(title=('Linear regression of variance ~ VAF <br>'
-                                 f'R2 score: {round(var_score,3)}'))
+                                 f'R2 score: {round(var_score,3)}'),
+                          template='plotly_white')
     var_fig.update_xaxes(title='VAF')
     var_fig.update_yaxes(title='Gradients Variance')
 
@@ -225,21 +228,118 @@ def neutral_distribution(syn, n_std=2):
         + n_std*np.sqrt(var_regr.predict(np.c_[x]))
     y_mean = mean_regr.predict(np.c_[x])
 
-    fig.add_trace(go.Scatter(x=x, y=y_mean,
-                             name='Mean linear regression',
-                             marker=dict(color='Lightseagreen')))
+    fig.add_trace(
+        go.Scatter(x=x, y=y_mean,
+                   name='Mean linear regression',
+                   marker_color=mean_color))
 
-    fig.add_trace(go.Scatter(x=x, y=y_std,
-                             name='Neutral growth filter',
-                             marker=dict(color='darkorange')))
+    fig.add_trace(
+        go.Scatter(x=x, y=y_std,
+                   name='Neutral growth filter',
+                   marker_color=var_color))
 
     fig.update_layout(title=(f'Neutral growth filter <br>Filters '
                              f'{round(percentage,1)}% of all '
-                             f'synonymous mutations'))
+                             f'synonymous mutations'),
+                      template='plotly_white')
     fig.update_xaxes(title='VAF')
     fig.update_yaxes(title='Regularized gradient')
 
-    return mean_regr, var_regr, [fig, mean_fig, var_fig]
+    # NGF stack plot
+    # Start subplot figure with shared xaxis
+    NGF_stack = make_subplots(rows=3, cols=1,
+                              row_heights=[0.4, 0.4, 0.2],
+                              shared_xaxes=True,
+                              vertical_spacing=0.05)
+
+    # Row 1 variance plot
+    NGF_stack.add_trace(
+        go.Scatter(
+            x=bin_center,
+            y=variance,
+            mode='markers',
+            marker_color=bin_color,
+            showlegend=False,
+            error_y=dict(
+                type='data',
+                symmetric=False,
+                array=var_high,
+                arrayminus=var_low)
+            ),
+        row=1, col=1)
+
+    x = [0, max(bin_center)]
+    NGF_stack.add_trace(
+        go.Scatter(x=x,
+                   y=var_regr.predict(np.c_[x]),
+                   mode='lines',
+                   marker_color=var_color,
+                   showlegend=False),
+        row=1, col=1)
+
+    # Row 2 mean plot
+    NGF_stack.add_trace(
+        go.Scatter(
+            x=bin_center,
+            y=mean,
+            mode='markers',
+            marker_color=bin_color,
+            showlegend=False,
+            error_y=dict(
+                type='data',
+                symmetric=False,
+                array=mean_high,
+                arrayminus=mean_low)
+            ),
+        row=2, col=1)
+
+    # trace mean linear fit
+    x = [0, max(bin_center)]
+    NGF_stack.add_trace(
+        go.Scatter(
+            x=x,
+            y=mean_regr.predict(np.c_[x]),
+            mode='lines',
+            marker_color=mean_color,
+            showlegend=False),
+        row=2, col=1)
+
+    # Compute bins for barplot
+    bin_center = []
+    bin_width = []
+    bin_size = []
+    for bin in filtered_melt_syn.bin.unique():
+        bin_size.append(
+            len(filtered_melt_syn[filtered_melt_syn['bin'] == bin]))
+        bin_center.append((bin.left+bin.right)/2)
+        bin_width.append(bin.right-bin.left)
+
+    # Row 3 Plot bin histogram
+    NGF_stack.add_trace(
+        go.Bar(
+            x=bin_center,
+            y=bin_size,
+            marker_color='Orange',
+            width=bin_width,
+            showlegend=False),
+        row=3, col=1)
+
+    NGF_stack.update_yaxes(row=1, col=1,
+                           title_text='Gradient Variance',
+                           range=[0, max(variance)])
+    NGF_stack.update_yaxes(title_text='Gradient', row=2, col=1)
+    NGF_stack.update_yaxes(title_text='Bin counts',
+                           tickmode='linear', dtick=400, row=3, col=1)
+    NGF_stack.update_xaxes(title_text="VAF", row=3, col=1)
+    NGF_stack.update_layout(template='plotly_white')
+
+    NGF_stack.update_layout(
+        template='plotly_white',
+        legend=dict(orientation="h",
+                    yanchor="bottom", y=1.02,
+                    xanchor="right", x=1))
+
+    return mean_regr, var_regr, [fig, mean_fig, var_fig, NGF_stack]
 
 
 def gene_bar(cohort, split=True, relative=False):
@@ -850,6 +950,69 @@ def model_cohort(cohort):
                                     id=part.id,
                                     p_key=traj.p_key))
     return model_traj
+
+
+def participant_filter_variant(part):
+    """ Plot a participant's profile using different colors for
+    fit and non-fit mutations"""
+
+    var_types = ["3'Flank", "5'Flank", "5'UTR", "Frame_Shift_Del",
+                 "Frame_Shift_Ins", "In_Frame_Ins", "Missense_Mutation",
+                 "Nonsense_Mutation", "Nonstop_Mutation", "Splice_Region",
+                 "Splice_Site"]
+    var_colors = ["#00BBDA", "#E18A00", "#BE9C00", "#8CAB00", "#24B700",
+                  "#00BE70", "#00C1AB", "#F8766D", "#8B93FF", "#D575FE",
+                  "#F962DD"]
+
+    var_zip = zip(var_types, var_colors)
+    var_dict = dict(var_zip)
+
+    fig = go.Figure()
+
+    # Empty trajectories for labeling fit and non-fit trajectories
+    fig.add_trace(
+        go.Scatter(x=[79], y=[0],
+                   name='fit mutations',
+                   mode='lines',
+                   marker=dict(color='Black'),
+                   legendgroup='non-fit',
+                   showlegend=True))
+
+    fig.add_trace(
+        go.Scatter(x=[79], y=[0],
+                   name='non-fit mutations',
+                   mode='lines',
+                   marker=dict(color='rgb(204,204,204)'),
+                   legendgroup='non-fit',
+                   showlegend=True))
+
+    for traj in part.trajectories:
+        # Plot trajectories  using different colors according to traj.filter
+        if traj.filter is False:
+            fig.add_trace(
+                go.Scatter(x=traj.data.age, y=traj.data.AF,
+                           name='non-fit',
+                           mode='lines',
+                           marker=dict(color='rgb(204,204,204)'),
+                           legendgroup='non-fit',
+                           showlegend=False))
+
+    for traj in part.trajectories:
+        if traj.filter is True:
+            fig.add_trace(
+                go.Scatter(x=traj.data.age, y=traj.data.AF,
+                           name=traj.mutation,
+                           mode='lines',
+                           marker=dict(color=var_dict[traj.variant_class]),
+                           legendgroup='fit',
+                           showlegend=True))
+
+    # Update layout
+    fig.update_layout(title=f'Participant {part.id}',
+                      xaxis_title='Age',
+                      yaxis_title='VAF')
+
+    return fig
 
 
 def participant_filter(part):

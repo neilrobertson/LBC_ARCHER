@@ -110,7 +110,7 @@ def find_mutation_rate(lamb, N, threshold):
     """ Given a birth rate (lamb), number of HSC (N) and a threshold,
     return the immigration rate so that under the dynamics of a CBM,
     no families are expected to reach threshold (VAF)"""
-    for mu in range(1, 13):
+    for mu in range(1, 100):
         n = 0
         E_n = 2
         while E_n > 1:
