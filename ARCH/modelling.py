@@ -203,7 +203,11 @@ def exponential_cells(time, fitness, origin):
     return np.exp(fitness*(time-origin))
 
 
-def participant_fit(part, neutral_cells=10000, rate=2.42):
+
+
+def participant_fit(part, neutral_cells=5000, rate=1.3,
+                    fitness_init=None, max_fitness=None,
+                    emcee=False):
     """ Fits an exponential model of clonal growth in bulk for all
     fit trajectories in a participant. Trajectories share a
     neutral_cell parameter, and the total number of cells is updated
@@ -215,10 +219,91 @@ def participant_fit(part, neutral_cells=10000, rate=2.42):
       predictions as a function of time.
     - vaf_plot: dictionary contianing model predictions for plotting."""
 
+    if max_fitness is None:
+        max_fitness = rate*0.5
+    if fitness_init is None:
+        fitness_init = 0.1
     # Initialize model parameters
     p = Parameters()
     for i, traj in enumerate(part):
-        p.add('fitness_%i' % i, value=rate*5/100, min=0, max=rate/3)
+        p.add('fitness_%i' % i, value=fitness_init,
+              min=0, max=max_fitness)
+        p.add('neutral_cells_%i' % i, value=neutral_cells,
+              min=neutral_cells/10, max=neutral_cells*10)
+        p.add('origin_%i' % i, value=0, min=0, max=traj.x[0])
+
+    # force all neutral_cells parameters equal
+    if len(part) > 1:
+        for i in range(1, len(part)):
+            p['neutral_cells_%i' % i].expr = 'neutral_cells_0'
+
+    # fit the data using lmfit 'minimize' function
+    model = Minimizer(joint_exponential_residual, p, fcn_args=(part,))
+    nelder = model.minimize(method='nelder')
+    if emcee is True:
+        # step 3: fine tune minimization with Levenberg-Marquardt algorithm ()
+        # This allows the computation of confidence intervals
+        ls = model.minimize(method='leastsq', params=nelder.params.copy())
+
+        # add sigma parameter (~exp(variance) of the error distribution)
+        ls.params.add('__lnsigma', value=np.log(0.1),
+                      min=np.log(0.001), max=np.log(2))
+        emcee = minimize(joint_exponential_residual, method='emcee', seed=1,
+                         nan_policy='omit', burn=300, steps=1000,
+                         nwalkers=100, thin=1,
+                         params=ls.params,
+                         args=(part,),
+                         is_weighted=False, progress=False)
+
+    # update traj fitness
+    for i, traj in enumerate(part):
+        traj.fitness = nelder.params['fitness_%i' % i]*1
+        traj.fitness_percentage = 100*traj.fitness / rate
+        traj.neutral_cells = int(nelder.params['neutral_cells_%i' % i]*1)
+        traj.origin = nelder.params['origin_%i' % i]*1
+        traj.nelder = nelder
+        data_vaf = np.array(list(traj.data_vaf.values()))
+        model_vaf = np.array(list(traj.model_vaf.values()))
+        traj.r2 = np.linalg.norm(data_vaf-model_vaf)
+        if emcee is True:
+            traj.ls = ls
+            traj.emcee = emcee
+
+    time = np.linspace(65, 95, 1000)
+    for traj in part:
+        traj.vaf_plot = dict.fromkeys(time)
+
+    for x in time:
+        traj_cells = []
+        for traj in part:
+            traj_cells.append(exponential_cells(x, traj.fitness, traj.origin))
+        total_cells = part[0].neutral_cells + sum(traj_cells)
+        for i, traj in enumerate(part):
+            traj.vaf_plot[x] = traj_cells[i]/(2*total_cells)
+
+
+def fit_init(part, neutral_cells=5000, rate=1.3,
+             fitness_init=None, max_fitness=None):
+    """ Fits an exponential model of clonal growth in bulk for all
+    fit trajectories in a participant. Trajectories share a
+    neutral_cell parameter, and the total number of cells is updated
+    with the growth of each trajectory.
+    The following attributes are added for each trajectory in part:
+    - nelder: lmfit Nelder model.
+    - fitness, origin and neutral cells parameters.
+    - data_vaf and model_vaf: dictionaries containing data and model
+      predictions as a function of time.
+    - vaf_plot: dictionary contianing model predictions for plotting."""
+
+    if max_fitness is None:
+        max_fitness = rate*0.5
+    if fitness_init is None:
+        fitness_init = 0.1
+    # Initialize model parameters
+    p = Parameters()
+    for i, traj in enumerate(part):
+        p.add('fitness_%i' % i, value=fitness_init,
+              min=0, max=max_fitness)
         p.add('neutral_cells_%i' % i, value=neutral_cells,
               min=neutral_cells/10, max=neutral_cells*10)
         p.add('origin_%i' % i, value=0, min=0, max=traj.x[0])
@@ -235,12 +320,16 @@ def participant_fit(part, neutral_cells=10000, rate=2.42):
     # update traj fitness
     for i, traj in enumerate(part):
         traj.fitness = nelder.params['fitness_%i' % i]*1
+        traj.fitness_percentage = 100*traj.fitness / rate
         traj.neutral_cells = int(nelder.params['neutral_cells_%i' % i]*1)
         traj.origin = nelder.params['origin_%i' % i]*1
         traj.nelder = nelder
         data_vaf = np.array(list(traj.data_vaf.values()))
         model_vaf = np.array(list(traj.model_vaf.values()))
         traj.r2 = np.linalg.norm(data_vaf-model_vaf)
+        if emcee is True:
+            traj.ls = ls
+            traj.emcee = emcee
 
     time = np.linspace(65, 95, 1000)
     for traj in part:
@@ -526,7 +615,6 @@ def participant_model_plot(model_list, id):
     min_time = min(min_time)
     max_time = min(max_time)
 
-
     fig = go.Figure()
     for i, traj in enumerate(part):
         x = list(traj.data_vaf.keys())
@@ -560,10 +648,7 @@ def participant_model_plot(model_list, id):
         xaxis_title='Age (in years)',
         yaxis_title='VAF')
 
-
-
-    #fig.update_xaxes(range=[min_time - 3, max_time + 3])
-
+    # fig.update_xaxes(range=[min_time - 3, max_time + 3])
 
     return fig
 
@@ -941,9 +1026,9 @@ def damage_class(model, fs_ter='fs - ter',
         template='simple_white',
         boxmode='group'
     )
-    fig.update_yaxes(title='fitness', type='log', dtick=1, row=2, col=1)
+    fig.update_yaxes(title='fitness', type='log', dtick=[0.05,0.1,0.2,0.4], row=2, col=1)
     fig.update_yaxes(title='trajectory counts', row=1, col=1)
-    return fig
+    return fig, df
 #
 # """Logistic model fit functions"""
 #
