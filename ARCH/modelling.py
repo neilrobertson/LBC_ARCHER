@@ -203,11 +203,8 @@ def exponential_cells(time, fitness, origin):
     return np.exp(fitness*(time-origin))
 
 
-
-
-def participant_fit(part, neutral_cells=5000, rate=1.3,
-                    fitness_init=None, max_fitness=None,
-                    emcee=False):
+def participant_fit(part, init, rate=1.3, fit_method='least_squares',
+                    vary_cells=True):
     """ Fits an exponential model of clonal growth in bulk for all
     fit trajectories in a participant. Trajectories share a
     neutral_cell parameter, and the total number of cells is updated
@@ -219,18 +216,18 @@ def participant_fit(part, neutral_cells=5000, rate=1.3,
       predictions as a function of time.
     - vaf_plot: dictionary contianing model predictions for plotting."""
 
-    if max_fitness is None:
-        max_fitness = rate*0.5
-    if fitness_init is None:
-        fitness_init = 0.1
+    fitness_init = init[0]
+    origin_init = init[1]
+    neutral_cells_init = init[2]
     # Initialize model parameters
     p = Parameters()
     for i, traj in enumerate(part):
-        p.add('fitness_%i' % i, value=fitness_init,
-              min=0, max=max_fitness)
-        p.add('neutral_cells_%i' % i, value=neutral_cells,
-              min=neutral_cells/10, max=neutral_cells*10)
-        p.add('origin_%i' % i, value=0, min=0, max=traj.x[0])
+        p.add('fitness_%i' % i, value=fitness_init[i],
+              min=1.3*0.01, max=1.3)
+        p.add('origin_%i' % i, value=origin_init[i],
+              min=0, max=traj.x[0])
+        p.add('neutral_cells_%i' % i, value=neutral_cells_init,
+              min=500, max=200_000, vary=vary_cells)
 
     # force all neutral_cells parameters equal
     if len(part) > 1:
@@ -239,23 +236,9 @@ def participant_fit(part, neutral_cells=5000, rate=1.3,
 
     # fit the data using lmfit 'minimize' function
     model = Minimizer(joint_exponential_residual, p, fcn_args=(part,))
-    nelder = model.minimize(method='nelder')
-    if emcee is True:
-        # step 3: fine tune minimization with Levenberg-Marquardt algorithm ()
-        # This allows the computation of confidence intervals
-        ls = model.minimize(method='leastsq', params=nelder.params.copy())
+    nelder = model.minimize(method=fit_method)
 
-        # add sigma parameter (~exp(variance) of the error distribution)
-        ls.params.add('__lnsigma', value=np.log(0.1),
-                      min=np.log(0.001), max=np.log(2))
-        emcee = minimize(joint_exponential_residual, method='emcee', seed=1,
-                         nan_policy='omit', burn=300, steps=1000,
-                         nwalkers=100, thin=1,
-                         params=ls.params,
-                         args=(part,),
-                         is_weighted=False, progress=False)
-
-    # update traj fitness
+    # update trajetories
     for i, traj in enumerate(part):
         traj.fitness = nelder.params['fitness_%i' % i]*1
         traj.fitness_percentage = 100*traj.fitness / rate
@@ -265,9 +248,9 @@ def participant_fit(part, neutral_cells=5000, rate=1.3,
         data_vaf = np.array(list(traj.data_vaf.values()))
         model_vaf = np.array(list(traj.model_vaf.values()))
         traj.r2 = np.linalg.norm(data_vaf-model_vaf)
-        if emcee is True:
-            traj.ls = ls
-            traj.emcee = emcee
+
+    # update residual
+    residual = sum([traj.r2 for traj in part])
 
     time = np.linspace(65, 95, 1000)
     for traj in part:
@@ -281,9 +264,11 @@ def participant_fit(part, neutral_cells=5000, rate=1.3,
         for i, traj in enumerate(part):
             traj.vaf_plot[x] = traj_cells[i]/(2*total_cells)
 
+    return nelder, residual
 
-def fit_init(part, neutral_cells=5000, rate=1.3,
-             fitness_init=None, max_fitness=None):
+
+def fit_init(part, fitness_init, neutral_cells_init, origin_init,
+             fit_method='nelder'):
     """ Fits an exponential model of clonal growth in bulk for all
     fit trajectories in a participant. Trajectories share a
     neutral_cell parameter, and the total number of cells is updated
@@ -295,18 +280,14 @@ def fit_init(part, neutral_cells=5000, rate=1.3,
       predictions as a function of time.
     - vaf_plot: dictionary contianing model predictions for plotting."""
 
-    if max_fitness is None:
-        max_fitness = rate*0.5
-    if fitness_init is None:
-        fitness_init = 0.1
     # Initialize model parameters
     p = Parameters()
     for i, traj in enumerate(part):
         p.add('fitness_%i' % i, value=fitness_init,
-              min=0, max=max_fitness)
-        p.add('neutral_cells_%i' % i, value=neutral_cells,
-              min=neutral_cells/10, max=neutral_cells*10)
-        p.add('origin_%i' % i, value=0, min=0, max=traj.x[0])
+              min=0.01, max=1.3)
+        p.add('neutral_cells_%i' % i, value=neutral_cells_init,
+              min=500, max=200_000)
+        p.add('origin_%i' % i, value=origin_init, min=0, max=traj.x[0])
 
     # force all neutral_cells parameters equal
     if len(part) > 1:
@@ -315,21 +296,23 @@ def fit_init(part, neutral_cells=5000, rate=1.3,
 
     # fit the data using lmfit 'minimize' function
     model = Minimizer(joint_exponential_residual, p, fcn_args=(part,))
-    nelder = model.minimize(method='nelder')
+    nelder = model.minimize(method=fit_method)
 
-    # update traj fitness
+
+    # update trajectories in participant
     for i, traj in enumerate(part):
+        # append estimated parameters
         traj.fitness = nelder.params['fitness_%i' % i]*1
-        traj.fitness_percentage = 100*traj.fitness / rate
         traj.neutral_cells = int(nelder.params['neutral_cells_%i' % i]*1)
         traj.origin = nelder.params['origin_%i' % i]*1
+
+        # append participant fit
         traj.nelder = nelder
+
+        # Estimate r2 error in trajectory
         data_vaf = np.array(list(traj.data_vaf.values()))
         model_vaf = np.array(list(traj.model_vaf.values()))
         traj.r2 = np.linalg.norm(data_vaf-model_vaf)
-        if emcee is True:
-            traj.ls = ls
-            traj.emcee = emcee
 
     time = np.linspace(65, 95, 1000)
     for traj in part:
@@ -342,6 +325,7 @@ def fit_init(part, neutral_cells=5000, rate=1.3,
         total_cells = part[0].neutral_cells + sum(traj_cells)
         for i, traj in enumerate(part):
             traj.vaf_plot[x] = traj_cells[i]/(2*total_cells)
+        return nelder
 
 
 def joint_exponential_residual(p, participant):
@@ -639,8 +623,7 @@ def participant_model_plot(model_list, id):
                        text=(f'id: {traj.id}<br>'
                              f'fitness: {round(traj.fitness,3)}<br>'
                              f'origin: {round(traj.origin,3)}<br>'
-                             f'r2: {round(traj.r2,3)}<br>'
-                             f'pearson: {round(traj.pearson[0],1)}'),
+                             f'r2: {round(traj.r2,3)}'),
                        name=traj.mutation))
     fig.update_layout(
         title=(f'Trajectory fit of participant {part[0].id} <br>'
