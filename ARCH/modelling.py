@@ -194,27 +194,28 @@ def exponential_residual_2(p, x, y):
 """ Exponential model fitted in bulk by participant"""
 
 
-def exponential_cells(time, fitness, origin):
-    """ Returns the number of cell of an exponentially growing trajectory.
-    The function inputs are
-    time: time point for evaluation.
-    fitness: growth speed of the family of cells.
-    origin: time of origin of the family of cells."""
-    return np.exp(fitness*(time-origin))
-
-
 def participant_fit(part, init, rate=1.3, fit_method='least_squares',
                     vary_cells=True):
     """ Fits an exponential model of clonal growth in bulk for all
     fit trajectories in a participant. Trajectories share a
     neutral_cell parameter, and the total number of cells is updated
     with the growth of each trajectory.
+    Inputs:
+    - part: List. List of all trajectories in a participant.
+    - init: initialization list. Contains 2 sublists and one element.
+            init[0]: List of initialisations for all fitness parameters.
+            init[1]: List of initialisation for all origin parameters.
+            init[2]: Float initialising neutral_cells parameter.
+
     The following attributes are added for each trajectory in part:
-    - nelder: lmfit Nelder model.
+    - nelder: optimallmfit Nelder model.
     - fitness, origin and neutral cells parameters.
     - data_vaf and model_vaf: dictionaries containing data and model
       predictions as a function of time.
-    - vaf_plot: dictionary contianing model predictions for plotting."""
+    - vaf_plot: dictionary contianing model predictions for plotting.
+
+    Output:
+        """
 
     fitness_init = init[0]
     origin_init = init[1]
@@ -223,7 +224,7 @@ def participant_fit(part, init, rate=1.3, fit_method='least_squares',
     p = Parameters()
     for i, traj in enumerate(part):
         p.add('fitness_%i' % i, value=fitness_init[i],
-              min=1.3*0.01, max=1.3)
+              min=0, max=1.3)
         p.add('origin_%i' % i, value=origin_init[i],
               min=0, max=traj.x[0])
         p.add('neutral_cells_%i' % i, value=neutral_cells_init,
@@ -236,15 +237,15 @@ def participant_fit(part, init, rate=1.3, fit_method='least_squares',
 
     # fit the data using lmfit 'minimize' function
     model = Minimizer(joint_exponential_residual, p, fcn_args=(part,))
-    nelder = model.minimize(method=fit_method)
+    fit = model.minimize(method=fit_method)
 
     # update trajetories
     for i, traj in enumerate(part):
-        traj.fitness = nelder.params['fitness_%i' % i]*1
+        traj.fitness = fit.params['fitness_%i' % i]*1
         traj.fitness_percentage = 100*traj.fitness / rate
-        traj.neutral_cells = int(nelder.params['neutral_cells_%i' % i]*1)
-        traj.origin = nelder.params['origin_%i' % i]*1
-        traj.nelder = nelder
+        traj.neutral_cells = int(fit.params['neutral_cells_%i' % i]*1)
+        traj.origin = fit.params['origin_%i' % i]*1
+        traj.fit = fit
         data_vaf = np.array(list(traj.data_vaf.values()))
         model_vaf = np.array(list(traj.model_vaf.values()))
         traj.r2 = np.linalg.norm(data_vaf-model_vaf)
@@ -264,68 +265,7 @@ def participant_fit(part, init, rate=1.3, fit_method='least_squares',
         for i, traj in enumerate(part):
             traj.vaf_plot[x] = traj_cells[i]/(2*total_cells)
 
-    return nelder, residual
-
-
-def fit_init(part, fitness_init, neutral_cells_init, origin_init,
-             fit_method='nelder'):
-    """ Fits an exponential model of clonal growth in bulk for all
-    fit trajectories in a participant. Trajectories share a
-    neutral_cell parameter, and the total number of cells is updated
-    with the growth of each trajectory.
-    The following attributes are added for each trajectory in part:
-    - nelder: lmfit Nelder model.
-    - fitness, origin and neutral cells parameters.
-    - data_vaf and model_vaf: dictionaries containing data and model
-      predictions as a function of time.
-    - vaf_plot: dictionary contianing model predictions for plotting."""
-
-    # Initialize model parameters
-    p = Parameters()
-    for i, traj in enumerate(part):
-        p.add('fitness_%i' % i, value=fitness_init,
-              min=0.01, max=1.3)
-        p.add('neutral_cells_%i' % i, value=neutral_cells_init,
-              min=500, max=200_000)
-        p.add('origin_%i' % i, value=origin_init, min=0, max=traj.x[0])
-
-    # force all neutral_cells parameters equal
-    if len(part) > 1:
-        for i in range(1, len(part)):
-            p['neutral_cells_%i' % i].expr = 'neutral_cells_0'
-
-    # fit the data using lmfit 'minimize' function
-    model = Minimizer(joint_exponential_residual, p, fcn_args=(part,))
-    nelder = model.minimize(method=fit_method)
-
-
-    # update trajectories in participant
-    for i, traj in enumerate(part):
-        # append estimated parameters
-        traj.fitness = nelder.params['fitness_%i' % i]*1
-        traj.neutral_cells = int(nelder.params['neutral_cells_%i' % i]*1)
-        traj.origin = nelder.params['origin_%i' % i]*1
-
-        # append participant fit
-        traj.nelder = nelder
-
-        # Estimate r2 error in trajectory
-        data_vaf = np.array(list(traj.data_vaf.values()))
-        model_vaf = np.array(list(traj.model_vaf.values()))
-        traj.r2 = np.linalg.norm(data_vaf-model_vaf)
-
-    time = np.linspace(65, 95, 1000)
-    for traj in part:
-        traj.vaf_plot = dict.fromkeys(time)
-
-    for x in time:
-        traj_cells = []
-        for traj in part:
-            traj_cells.append(exponential_cells(x, traj.fitness, traj.origin))
-        total_cells = part[0].neutral_cells + sum(traj_cells)
-        for i, traj in enumerate(part):
-            traj.vaf_plot[x] = traj_cells[i]/(2*total_cells)
-        return nelder
+    return fit, residual
 
 
 def joint_exponential_residual(p, participant):
@@ -380,10 +320,167 @@ def joint_exponential_residual(p, participant):
     residual = []
     for traj in participant:
         for key in traj.data_vaf.keys():
-            residual.append(traj.data_vaf[key] - traj.model_vaf[key])
+            residual.append(abs(traj.data_vaf[key] - traj.model_vaf[key]))
 
     # return the array that needs minimizing
     return residual
+
+
+def exponential_cells(time, fitness, origin):
+    """ Returns the number of cell of an exponentially growing trajectory.
+    The function inputs are
+    time: time point for evaluation.
+    fitness: growth speed of the family of cells.
+    origin: time of origin of the family of cells."""
+    return np.exp(fitness*(time-origin))
+
+
+def init_fit(part, method='least_squares', n_iterations=500):
+    '''Runs modelling.participant_fit with a grid of
+    initialisation values for all model parameters.
+    Selects best fit model based on total R2 error.
+    Inputs:
+    - part: List. List of trajectories in a participant.
+    - method: String. Any minmization algorithm as implemented in lmfit.
+    Returns:
+    - part_id: String. Participant's id for fit.
+    - part: List. List of trajectories in fitted participant.
+    - plot_data: Pandas DataFrame. History of all fits using different
+                                   initialisations.
+    - '''
+
+    # Set number of initialisation iterations
+    iterations = len(part)*500
+
+    # Create parameter initialisation list
+    init_list = []
+    for i in range(iterations):
+        # For each iteration append parameters for fit initialisation
+        fitness_init = np.random.uniform(0, 1.3, len(part))
+        origin_init = [np.random.uniform(0, traj.x[0]) for traj in part]
+        neutral_cells_init = np.random.uniform(500, 200_000)
+        init_list.append([fitness_init, origin_init, neutral_cells_init])
+
+    # Create fitted fit and residual list to track fitted models
+    # and their respective R2 error.
+    fit_list = []
+    residual_list = []
+
+    # Fit model using all parameter initialisations in init_list.
+    for init in init_list:
+        fit, residual = participant_fit(part=part, init=init,
+                                        fit_method=method)
+
+        # append  fit and residual to lists.
+        fit_list.append(fit)
+        residual_list.append(residual)
+
+    # plot optimal trajectory
+    min_residual = 10
+    for residual, init in zip(residual_list, init_list):
+        if residual < min_residual:
+            min_residual = residual
+            min_init = init
+
+    optimal_fit, optimal_residual = participant_fit(
+                                init=min_init, part=part, fit_method=method)
+
+    # Create dataframe for plotting distributions of parameter fits
+    # by initialisation.
+    plot_data = pd.DataFrame(columns=['Gene', 'Gene name', 'Fitness',
+                                      'Origin', 'Cells', 'error', 'aic'])
+    for fit, residual in zip(fit_list, residual_list):
+        for i in range(0, len(part)):
+            plot_data = plot_data.append(
+                            {'Gene': i + np.random.normal(0, 0.1),
+                             'Gene name': part[i].mutation,
+                             'Fitness': fit.params['fitness_%i' % i]*1,
+                             'Origin': fit.params['origin_%i' % i]*1,
+                             'Cells': fit.params[
+                             'neutral_cells_%i' % i]*1,
+                             'error': residual,
+                             'aic': fit.aic}, ignore_index=True)
+
+    # print participant id to keep track of progress
+    print(part[0].id)
+
+    return part[0].id, part, plot_data, optimal_fit, optimal_residual
+
+
+def fit_postprocessing(init_fit_output):
+    '''Post-processing of 'init_fit' output when function is mapped to
+    a list of participants.
+    Input:
+    list_participants: List. List of outputs after
+                             mapping a list of participants to init_fit.
+    Returns:
+    model: List. Flat list of all fitted trajectories.
+    fit_dict: Dictionary.
+        keys: String. Participant id.
+        items: List. Fit history DataFrame, Lmfit optimal model,
+                     optimal fit residual.
+    '''
+    model = []
+    fit_dict = dict()
+    for fit in init_fit_output:
+        fit_dict[fit[0]] = fit[2:]
+        model.append(fit[1])
+
+    model = [item for sublist in model for item in sublist]
+
+    return model, fit_dict
+
+
+def fitting_error_plot(key, part_dict, fit_dict, filter_quantile=0.1):
+    '''Creates a plot of all obtained fitted parameters by gene,
+    coloured according to the R2 error.
+    Inputs:
+    - key: part_id
+    - part_dict: dictionary of all participants trajectories.
+    - fit_dict: dictionary of all participants fit histories.
+    - filter_quantile: Float. Quantile filtering threshold.
+    Returns:
+    fig: plotly graphical object.'''
+
+    # Extract participants trajectories, and fit initialisation history.
+    part = part_dict[key]
+    fit = fit_dict[key]
+
+    # Extract DataFrame from particpant initialisation history
+    data = fit[0]
+
+    # Filter data using filter_quantile
+    if filter_quantile is not None:
+        data = data[data.error < np.quantile(data.error, filter_quantile)]
+
+    # plot optimal fitness
+    fig = px.scatter(data, x='Gene', y='Fitness',
+                     color='error', hover_data=['aic'])
+    tickvals = []
+    ticktext = []
+    for i, traj in enumerate(part):
+        ticktext.append(traj.gene)
+        tickvals.append(i)
+    # Set custom x-axis labels
+    fig.update_xaxes(title=None, ticktext=ticktext, tickvals=tickvals)
+
+    return fig
+
+
+def cells_origin(fit_dict, part_id, filter_quantile=0.1):
+    '''Returns scatter plot of origin vs neutral cells for all trajectories in
+    participant.'''
+
+    data = fit_dict[part_id][0]
+
+    # Filter data using filter_quantile
+    if filter_quantile is not None:
+        data = data[data.error < np.quantile(data.error, filter_quantile)]
+
+    # Plot the relation between origin and cells for the first variant
+    fig = px.scatter(data, x='Origin', y='Cells', color='Gene name')
+
+    return fig
 
 
 """ Auxiliary plotting functions"""
@@ -403,8 +500,8 @@ def extended_plot_param(model_list, mutation, col_param=0):
 
     model_filtered = [model for model in model_list
                       if model.gene == mutation
-                      and model.nelder.params['fitness'] > 0
-                      and model.nelder.aic < -10]
+                      and model.fit.params['fitness'] > 0
+                      and model.fit.aic < -10]
 
     if model_filtered[0].model_type == '3-parameter exponential model':
         def prediction(params, x):
@@ -421,7 +518,7 @@ def extended_plot_param(model_list, mutation, col_param=0):
     # Create legend groups
     traj = model_filtered[0]
     x_label = np.linspace(70, 71, 2)
-    y_label = prediction(traj.nelder.params, x_label)
+    y_label = prediction(traj.fit.params, x_label)
 
     fig.add_trace(
         go.Scatter(x=[traj.x[0]], y=[traj.y[0]],
@@ -442,7 +539,7 @@ def extended_plot_param(model_list, mutation, col_param=0):
     # Create a trace for each traject
     for i, traj in enumerate(model_filtered):
         x_line = np.linspace(65, 95, 100)
-        y_fit = prediction(traj.nelder.params, x_line)
+        y_fit = prediction(traj.fit.params, x_line)
 
         fig.add_trace(
             go.Scatter(x=traj.x, y=traj.y,
@@ -459,7 +556,7 @@ def extended_plot_param(model_list, mutation, col_param=0):
                        line=dict(color=colors[color(traj)])),
             row=1, col=1)
 
-        fitness.append(traj.nelder.params['fitness'])  # append fitness to list
+        fitness.append(traj.fit.params['fitness'])  # append fitness to list
 
     # box plot with fitness estimates
     # Frist create the box
@@ -494,7 +591,7 @@ def extended_plot(model_list, mutation):
 
     model_filtered = [model for model in model_list
                       if model.gene == mutation
-                      and model.nelder.params['fitness'] > 0]
+                      and model.fit.params['fitness'] > 0]
 
     if model_filtered[0].model_type == '3-parameter exponential model':
         def prediction(params, x):
@@ -512,7 +609,7 @@ def extended_plot(model_list, mutation):
     # Create legend groups
     traj = model_filtered[0]
     x_label = np.linspace(70, 71, 2)
-    y_label = prediction(traj.nelder.params, x_label)
+    y_label = prediction(traj.fit.params, x_label)
 
     fig.add_trace(
         go.Scatter(x=[traj.x[0]], y=[traj.y[0]],
@@ -533,7 +630,7 @@ def extended_plot(model_list, mutation):
     # Create a trace for each traject
     for i, traj in enumerate(model_filtered):
         x_line = np.linspace(65, 95, 100)
-        y_fit = prediction(traj.nelder.params, x_line)
+        y_fit = prediction(traj.fit.params, x_line)
 
         fig.add_trace(
             go.Scatter(x=traj.x, y=traj.y,
@@ -550,7 +647,7 @@ def extended_plot(model_list, mutation):
                        line=dict(color=colors[i % 10-1])),
             row=1, col=1)
 
-        fitness.append(traj.nelder.params['fitness'])  # append fitness to list
+        fitness.append(traj.fit.params['fitness'])  # append fitness to list
 
     # box plot with fitness estimates
     # Frist create the box
@@ -627,7 +724,7 @@ def participant_model_plot(model_list, id):
                        name=traj.mutation))
     fig.update_layout(
         title=(f'Trajectory fit of participant {part[0].id} <br>'
-               f'aic: {int(traj.nelder.aic)}'),
+               f'aic: {int(traj.fit.aic)}'),
         xaxis_title='Age (in years)',
         yaxis_title='VAF')
 
@@ -651,7 +748,7 @@ def extended_plot_variant(model_list, mutation, var_dict=None):
 
     model_filtered = [traj for traj in model_list
                       if traj.gene == mutation
-                      and traj.nelder.params['fitness'] > 0]
+                      and traj.fit.params['fitness'] > 0]
 
     if model_filtered[0].model_type == '3-parameter exponential model':
         def prediction(params, x):
@@ -669,7 +766,7 @@ def extended_plot_variant(model_list, mutation, var_dict=None):
     # Create legend groups
     traj = model_filtered[0]
     x_label = np.linspace(70, 71, 2)
-    y_label = prediction(traj.nelder.params, x_label)
+    y_label = prediction(traj.fit.params, x_label)
 
     fig.add_trace(
         go.Scatter(x=[traj.x[0]], y=[traj.y[0]],
@@ -691,7 +788,7 @@ def extended_plot_variant(model_list, mutation, var_dict=None):
     # Create a trace for each traject
     for i, traj in enumerate(model_filtered):
         x_line = np.linspace(65, 95, 100)
-        y_fit = prediction(traj.nelder.params, x_line)
+        y_fit = prediction(traj.fit.params, x_line)
         fitness_variant.append(traj.variant_class)
         fig.add_trace(
             go.Scatter(x=traj.x, y=traj.y,
@@ -708,7 +805,7 @@ def extended_plot_variant(model_list, mutation, var_dict=None):
                        showlegend=False,
                        line=dict(color=var_dict[traj.variant_class])),
             row=1, col=1)
-        fitness.append(traj.nelder.params['fitness'])  # append fitness to list
+        fitness.append(traj.fit.params['fitness'])  # append fitness to list
 
     # box plot with fitness estimates
     # Frist create the box
