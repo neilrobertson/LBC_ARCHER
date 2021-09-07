@@ -55,8 +55,8 @@ prediction.
 ## Set up
 ### Data
 This package has been designed to transform and analyse genetic data from the
-Lothian Birth Cohort. To test this package ensure to transfer all files from
-https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE178936
+Lothian Birth Cohort. To test this package ensure to transfer all supplementary
+files from https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE178936
 to the Datasets folder.
 
 ### Python
