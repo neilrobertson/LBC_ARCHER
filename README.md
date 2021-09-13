@@ -17,7 +17,7 @@ Neil A. Robertson1+, Eric Latorre-Crespo1+, Maria Terradas-Terradas2,3, Alison C
 
 \+ Equal Contribution
 
-* Correspondence to: linus.schumacher@ed.ac.uk, kristina.kirschner@glasgow.ac.uk, tamir.chandra@igmm.ed.ac.uk
+\* Correspondence to: linus.schumacher@ed.ac.uk, kristina.kirschner@glasgow.ac.uk, tamir.chandra@igmm.ed.ac.uk
 
 ![image](https://user-images.githubusercontent.com/4477113/123115304-eaa67780-d437-11eb-9adf-6a892a334b50.png)
 
