@@ -15,7 +15,7 @@ Neil A. Robertson1+, Eric Latorre-Crespo1+, Maria Terradas-Terradas2,3, Alison C
 7. Department of Psychology, The University of Edinburgh, Edinburgh, UK
 8. Centre for Regenerative Medicine, University of Edinburgh, Edinburgh, EH16 4UU, UK
 
-+ Equal Contribution
+\+ Equal Contribution
 
 * Correspondence to: linus.schumacher@ed.ac.uk, kristina.kirschner@glasgow.ac.uk, tamir.chandra@igmm.ed.ac.uk
 
