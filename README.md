@@ -4,16 +4,18 @@ Repository for analysis of LBC ARCHER data.
 
 # Longitudinal dynamics of clonal haematopoiesis identifies gene-specific fitness effects
 
-Neil A. Robertson1+, Eric Latorre-Crespo1+, Maria Terradas-Terradas2,3, Alison C. Purcell2,3, Benjamin J Livesey1, Joseph A. Marsh1, Lee Murphy4, Angie Fawkes4, Louise MacGillivray4, Mhairi Copland2, Riccardo E. Marioni5, Sarah E. Harris6,7, Simon R. Cox6,7, Ian J. Deary6,7, Linus J. Schumacher8*, Kristina Kirschner2,3*, Tamir Chandra1*
-
+Neil A. Robertson1+, Eric Latorre-Crespo1+, Maria Terradas-Terradas2,3, Jorge Lemos-Portela4 Alison C. Purcell2,3, Benjamin J. Livesey1, Robert F. Hillary5, Joseph A. Marsh1, Lee Murphy6, Angie Fawkes6, Louise MacGillivray6, Mhairi Copland7, Riccardo E. Marioni5, Sarah E. Harris8,9, Simon R. Cox8,9, Ian J. Deary8,9, Linus J. Schumacher4#+, Kristina Kirschner2,3#+, Tamir Chandra1#+
+ 
 1. MRC Human Genetics Unit, University of Edinburgh, Edinburgh, EH4 2XU, UK
 2. Institute of Cancer Sciences, University of Glasgow, Glasgow, G61 1BD, UK
 3. Cancer Research UK Beatson Institute, Glasgow, UK
-4. Edinburgh Clinical Research Facility, University of Edinburgh, Edinburgh, EH4 2XU, UK
-5. Centre for Genomic and Experimental Medicine, Institute of Genetics and Molecular Medicine, University of Edinburgh, Edinburgh, EH4 2XU, UK
-6. Lothian Birth Cohorts, Department of Psychology, The University of Edinburgh, Edinburgh, UK
-7. Department of Psychology, The University of Edinburgh, Edinburgh, UK
-8. Centre for Regenerative Medicine, University of Edinburgh, Edinburgh, EH16 4UU, UK
+4. Centre for Regenerative Medicine, University of Edinburgh, Edinburgh, EH16 4UU, UK
+5. Centre for Genomic and Experimental Medicine, Institute of Genetics and Cancer, University 
+6. Edinburgh Clinical Research Facility, University of Edinburgh, Edinburgh, EH4 2XU, UK
+7. Paul O’Gorman Leukaemia Research Centre, Institute of Cancer Sciences, University of Glasgow, Gartnavel General Hospital, 1053 Great Western Road, Glasgow, G12 0YN, UK
+of Edinburgh, Edinburgh, EH4 2XU, UK
+8. Lothian Birth Cohorts, Department of Psychology, The University of Edinburgh, Edinburgh, UK
+9. Department of Psychology, The University of Edinburgh, Edinburgh, UK
 
 \+ Equal Contribution
 
