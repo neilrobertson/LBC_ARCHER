@@ -45,10 +45,11 @@ trackable trajectories associated to genetic clones.
 
 2. Create a filter to select clones presenting an abnormal behaviour.
     * Threshold filter: Selects variants based on a threshold of the clone size.
-    * Neutral growth filter: Selects variants whose growth cannot be explained by
-    stochastic drift of neutral clones.
+    * Likelihood-based Filter for Time-series data (LIFT): Selects variants using 
+    Bayesian model comparison.
 
-3. Fit a model of exponential growth of stem cells to infer the fitness
+3. Use Bayesian model comparison to select the most likely clonal structure 
+using a model of exponential growth of stem cells and infer the fitness
 advantage conferred by genetic variants to haematopoietic stem cells.
 
 4. Quality control, statistical analysis and association with protein damage
@@ -79,22 +80,16 @@ Alternatively, to install the environment run the following commands
     conda install -c anaconda ipykernel
     python -m ipykernel install --user --name=ARCH_env
 
-If the environment is already active, use 'analysis_run.sh' instead of
-'full_run.sh'.
-
 ## Test
-In order to facilitate testing, a less computationally heavy analysis is
-implemented in 'full_run.sh' and 'analysis_run.sh' with a typical run time of
-10 minutes.
+In order to facilitate testing, a less computationally heavy analysis  can be
+implemented modifying the resolution of the implementation of the Bayesian model
+comparison.
 
-To run the analysis as performed in the article, make the following
-modifications:
-- Modify line 132 of 'Scripts/full_NGF_run.py'
-- Modify line 108 of 'Scripts/full_threshold_run.py'
+Set global parameters:
+- Modify lines 40-45 in 'Scripts/LiFT_clonal_fit.py'
+- Modify lines 39- 44 in 'Scripts/threshold_clonal_fit.py'
 
-to increase the number of random initialisations of the model fitting process.
-In the article both iteration numbers were increased to 500, resulting in a
-typical run time of 2h.
+Currently, the full implementation of the code runs in ~12 hours on 60 cores.
 
 ## Analysis exploration
 To further explore the analysis of longitudinal trajectories, a series of
