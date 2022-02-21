@@ -25,7 +25,8 @@ var_dict = {"3'Flank": '#00BBDA',
             'Nonsense_Mutation': '#F8766D',
             'Nonstop_Mutation': '#8B93FF',
             'Splice_Region': '#D575FE',
-            'Splice_Site': '#F962DD'}
+            'Splice_Site': '#F962DD',
+            'In_Frame_Del': '#c17d56'}
 
 # convert dictionary into string
 # using json.dumps()

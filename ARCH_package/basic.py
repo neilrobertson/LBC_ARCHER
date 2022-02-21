@@ -8,15 +8,19 @@ We define the participant class and define a function to process a cohort.
 # =============================================================================
 # Imports
 # =============================================================================
+
 import json
-import pandas as pd
 import numpy as np
+from tqdm import tqdm
 # =============================================================================
 # Import local packages
 # =============================================================================
+
 import plot
 import auxiliary
 import color_dictionaries.gene_color_dict as gene_color_dict
+import color_dictionaries.variant_color_dict as variant_color_dict
+
 # =============================================================================
 # Create local classes
 # =============================================================================
@@ -25,7 +29,8 @@ import color_dictionaries.gene_color_dict as gene_color_dict
 class participant:
     '''Participant class object.
     Attributes:
-    - id: String. Participant's id
+    - id: String. Participant's id.
+    - cohort: str. LBC cohort. 
     - mutation_list: List of strings. Variants detected in participant.
     - trajectories: List of trajectory class objects.
                     Each element of the list corresponds to the trajectory
@@ -38,9 +43,10 @@ class participant:
                          found in this participant.
     '''
 
-    def __init__(self, id=None, mutation_list=None, trajectories=None,
+    def __init__(self, id=None, cohort=None, mutation_list=None, trajectories=None,
                  data=None):
         self.id = id
+        self.cohort=cohort
         self.data = data
         self.mutation_list = mutation_list
         self.trajectories = trajectories
@@ -77,14 +83,20 @@ class trajectory:
                 of this trajectory.
     '''
 
-    def __init__(self, mutation=None, p_key=None, data=None,
-                 variant_class=None, germline=False, gradient=None):
+    def __init__(self, part_id=None, mutation=None, p_key=None, data=None,
+                 variant_class=None, germline=False, gradient=None,
+                 AF_outlier_pvalue=None, mdaf=None):
+
+        self.part_id = part_id
         self.mutation = mutation
         self.p_key = p_key
         self.variant_class = variant_class
         self.germline = germline
         self.data = data
         self.gradient = gradient
+        self.AF_outlier_pvalue = AF_outlier_pvalue
+        self.mdaf = mdaf
+
 # =============================================================================
 # Cohort loading functions
 # =============================================================================
@@ -100,6 +112,27 @@ def load(df, export_name=False, create_dict=False):
 
     # Basic manipulations
 
+    # Drop missing data points (DP=0)
+    df = df.drop(df[df.DP == 0].index)
+
+    # Create a column to store time step information
+    df['delta_t'] = 0
+
+    # Set cohort name
+    df['cohort'] = 'LBC21'
+    df.loc[df.participant_id.str.contains('LBC36') , 'cohort'] = "LBC36"
+
+    # Dropped 1st time point of LBC21 Cohort
+    df = df.drop(df[(df.cohort == "LBC21")
+                    & (df.wave == 1)].index)
+
+    # Drop participants from study
+    # Load excluded participants list
+    with open('../Resources/excluded_samples.json') as json_file:
+        excluded_samples = json.load(json_file)
+
+    df = df[df.participant_id.isin(excluded_samples) == False]
+
     # Create 1-letter amino acid change column
     # Load amino acid dictionary from resources
     with open('../Resources/amino_dict.json') as json_file:
@@ -107,7 +140,7 @@ def load(df, export_name=False, create_dict=False):
 
     # Append new columns containing gene + amino acid change
     df['p_key_1'] = (df['PreferredSymbol']
-                     + ' ' + df['protein_substitution'].replace(amino_dict,
+                        + ' ' + df['protein_substitution'].replace(amino_dict,
                                                                 regex=True))
     df['p_key'] = df['PreferredSymbol'] + ' ' + df['protein_substitution']
 
@@ -117,19 +150,21 @@ def load(df, export_name=False, create_dict=False):
     df.age = 3*(df.age-1)
 
     # add age of participant depending on cohort
-    df.loc[df.participant_id.str.contains('LBC0'), 'age'] = (
-        df.loc[df.participant_id.str.contains('LBC0'), 'age'] + 79)
-    df.loc[df.participant_id.str.contains('LBC36'), 'age'] = (
-        df.loc[df.participant_id.str.contains('LBC36'), 'age'] + 70)
+    df.loc[df.cohort == "LBC21", 'age'] = (
+        df.loc[df.cohort == "LBC21", 'age'] + 79)
+    df.loc[df.cohort == "LBC36", 'age'] = (
+        df.loc[df.cohort == "LBC36", 'age'] + 70)
 
     # Create participants and genetic trajectories
     # initialize complete list of participants
     cohort = []
-
-    for part_id in df.participant_id.unique():
+    id_list = list(df.participant_id.unique())
+    for part_id in tqdm(id_list):
+        part_df = df[df.participant_id == part_id]
         # create a list of participant objects with id ad data attributes.
         new_part = participant(id=part_id,
-                               data=df[df['participant_id'] == part_id])
+                               cohort=part_df.cohort.unique()[0],
+                               data=part_df)
 
         # Create trajectories for each key in the participant
         for key in new_part.data.key.unique():
@@ -141,6 +176,8 @@ def load(df, export_name=False, create_dict=False):
     if create_dict is True:
         # Create dictionary assigning colors to each gene present in the cohort
         gene_color_dict.create_dict(df.PreferredSymbol.unique())
+        variant_color_dict.create_dict(df.Variant_Classification.unique())
+        
 
     if export_name is not False:
         # Export cohort.
@@ -160,14 +197,42 @@ def load_key(part, key):
     """
     # Create a copy of the data slice corresponding to a trajectory
     key_data = part.data.loc[part.data['key'] == key].copy()
-    if len(key_data) < 2:   # avoid trajectories withh only 1 point
+    key_data = key_data.reset_index()
+
+    # avoid trajectories withh only 1 point
+    if len(key_data) < 2:
         return
+
+    # Compute time steps between observations 
+    # Notice that we append a 0 at last observation
+    key_data['delta_t'] = np.append(
+        np.diff(key_data.age), 0)
+        
+    # avoid trajectories without any observation (due to drop of 1st timepoint)
+    if (key_data.AO == 0).all():
+         return
+
     # append key to mutation_list
     part.mutation_list.append(key)
     # create a new trajectory
-    key_trajectory = trajectory(mutation=key, data=key_data[['AF', 'age']])
+    key_trajectory = trajectory(
+        part_id=part.id,
+        mutation=key, data=key_data[['AF', 'age', 'DP', 'AO', 'delta_t']])
+
+    # Set protein change attribute
     key_trajectory.p_key = key_data['p_key_1'].iloc[0]
+
+    # Set Variant classification attribute
     key_trajectory.variant_class = key_data['Variant_Classification'].iloc[0]
+
+    # Set outlier values
+    if key_data.AF_Outlier_Pvalue.isnull().all().all() == False:
+        key_trajectory.AF_outlier_pvalue = (
+            np.nanmean(key_data.AF_Outlier_Pvalue))
+
+    if key_data['95MDAF'].isnull().all().all() == False:
+        key_trajectory.mdaf = np.nanmean(key_data['95MDAF'])
+
     # germline condition
     germline = False
     if np.mean(key_data.AF) > 0.45:
@@ -179,28 +244,3 @@ def load_key(part, key):
                                / np.sqrt(np.diff(key_data.age.iloc[[0, -1]])))[0]
 
     part.trajectories.append(key_trajectory)
-
-# =============================================================================
-# Other
-# =============================================================================
-
-# def melt(cohort, filter=1, mutation=None):
-#     # melts a cohort into one pandas dataframe
-#     # similar to the original pd.dataframe but with relative gradients computed
-#
-#     full = pd.DataFrame()
-#
-#     for part in cohort:
-#         for traj in part.trajectories:
-#             if traj.data.AF.mean() < filter:
-#                 new = traj.data
-#                 new['mutation'] = traj.mutation
-#                 new['germline'] = traj.germline
-#                 new['fitness'] = new['regularized_gradient']/new['AF']
-#                 full = full.append(new, ignore_index=True)
-#
-#     # subset rows containing mutations in a particular gene
-#     if mutation is not None:
-#         full = full[full['mutation'].str.contains(mutation)]
-#
-#     return full

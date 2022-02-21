@@ -17,7 +17,7 @@ import plotly.express as px
 # =============================================================================
 
 
-def create_dict(genes, seed=1, colors=px.colors.qualitative.D3):
+def create_dict(genes, seed=2, colors=px.colors.qualitative.D3):
     """ Create and export in JSON format a dictionary assigning a color to
     each gene in the LBC.
     Parameter:

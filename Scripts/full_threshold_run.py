@@ -11,26 +11,41 @@
 import sys
 sys.path.append('../ARCH_package')
 
-import basic
-import plot
-import filtering
 import modelling
-
+import filtering
+import plot
+import basic
 # =============================================================================
 # Import general packages
 # =============================================================================
-
-import os
-import dill
-import pandas as pd
-import numpy as np
-from scipy.stats import pearsonr
-
-import multiprocessing as mp
-from functools import partial
 from tqdm import tqdm
+from functools import partial
+import multiprocessing as mp
+from scipy.stats import pearsonr
+import numpy as np
+import pandas as pd
+import argparse
+import dill
+import os
+# =============================================================================
+# Parse arguments
+# =============================================================================
 
-print('Threshold filtering and fit start.')
+# Parse number of initialisations per trajectory during fitting
+parser = argparse.ArgumentParser(
+	description='Choose number of iterations for fitting process.')
+parser.add_argument("--iterations", type=int, default=50,
+                    help=('number of random initialisations per' +
+                          'trajectory during the fitting process.'))
+
+args = parser.parse_args()
+
+# =============================================================================
+# Starting message
+# =============================================================================
+
+print('NGF filtering and fit start.')
+print(f'Number of fitting initialisations: {args.iterations}')
 
 # =============================================================================
 # Set exporting paths
@@ -87,8 +102,8 @@ plot.participant_filter(lbc[18]).write_image(
 cohort.gene_bar.write_image(global_path + 'gene_bar.svg')
 
 # Gradient summary plot
-cohort.gradient_plot.write_image(global_path + 'gradient_inset.png',
-                                 width=600, scale=10)
+cohort.gradient_plot.write_image(global_path + 'gradient_inset.svg',
+                                 width=600)
 
 # =============================================================================
 # Export cohort after filtering.
@@ -103,9 +118,6 @@ with open('../Exports/cohort_threshold.dill', 'wb') as outfile:
 # =============================================================================
 
 print('Fitting model of exponential growth.')
-
-# Set base numbeer of iterations for fitting
-fit_iterations = 50
 
 # Select all trajectories with more than 2 datapoints and mean <0.5
 model = [traj for traj in cohort.model if len(traj.x) > 2
@@ -122,7 +134,7 @@ fit_list = [part_dict[key] for key in list(part_dict.keys())]
 
 # Fix method for fitting.
 fit = partial(modelling.init_fit, method='least_squares',
-              n_iterations=fit_iterations)
+              n_iterations=args.iterations)
 
 # Fit trajectories for each participant with multiprocessing.
 if __name__ == '__main__':

@@ -19,16 +19,23 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import plotly.io as pio
+
+from plotly.validators.scatter.marker import SymbolValidator
+import random
+import json
 # =============================================================================
 # Global parameters
 # =============================================================================
-colors = px.colors.qualitative.Plotly
+colors = px.colors.qualitative.D3
 pio.templates.default = "simple_white"
 
 # Load variant color dictionary
 with open('../Resources/var_dict.json') as json_file:
     var_dict = json.load(json_file)
 
+# Load gene color dictionary
+with open('../Resources/gene_color_dict.json') as json_file:
+    gene_dict = json.load(json_file)
 
 # =============================================================================
 # Plotting functions for participants
@@ -93,7 +100,7 @@ def synonymous_profile(part_lbc, syn):
             go.Scatter(x=traj.data.age,
                        y=traj.data.AF,
                        marker_color=colors[0],
-                       opacity=0.3,
+                       opacity=0.5,
                        name='Non-Synonymous variant',
                        legendgroup='Non-synonymous variant'))
     # Plot all non-synonymous trajectories
@@ -125,6 +132,8 @@ def synonymous_profile(part_lbc, syn):
                                showlegend=False,
                                legendgroup='Synonymous variant'))
     fig.update_layout(title='Synonymous mutations',
+                      xaxis_title='Years',
+                      yaxis_title='VAF',
                       template='plotly_white',
                       legend=dict(
                           y=0.95,
@@ -144,7 +153,7 @@ def mutation(cohort, mutation):
     fig = go.Figure()
 
     for part in cohort:
-        for i, word in enumerate(part.mutation_list):
+        for i, word in enumerate(part.cohort):
             if mutation in word.split():
                 traj = part.trajectories[i]
                 fig.add_trace(go.Scatter(x=traj.data.age,
@@ -268,7 +277,8 @@ def top_bar(cohort, n_genes=10, all=False):
     gene_dict = {element: 0 for element in set(gene_list)}
     for part in cohort:
         for traj in part.trajectories:
-            gene_dict[traj.mutation.split()[0]] = gene_dict[traj.mutation.split()[0]] + 1
+            gene_dict[traj.mutation.split()[0]] = gene_dict[traj.mutation.split()[
+                                          0]] + 1
     gene_dict = dict(sorted(gene_dict.items(),
                             key=lambda item: item[1], reverse=True))
 
@@ -303,7 +313,7 @@ def gradients(cohort, mutations):
     return fig
 
 
-def gene_box(cohort, order='median', percentage=False):
+def gene_box(cohort, order='median', scale='log'):
     """Box plot with counts of filtered mutations by gene.
        percentage computes fitness as the increase with respect to
        the self-renewing replication rate lambda=1.3.
@@ -320,16 +330,11 @@ def gene_box(cohort, order='median', percentage=False):
     gene_dict = {element: [] for element in set(gene_list)}
 
     # update the counts for each gene
-    if percentage is False:
-        y_label = 'Fitness'
-        for traj in cohort:
-            fitness = traj.fitness
-            gene_dict[traj.gene].append(fitness)
-    if percentage is True:
-        y_label = 'fitness_percentage'
-        for traj in cohort:
-            fitness = traj.fitness_percentage
-            gene_dict[traj.gene].append(fitness)
+    y_label = 'Fitness'
+    for traj in cohort:
+        fitness = traj.fitness
+        gene_dict[traj.gene].append(fitness)
+
     # sort dictionary in descending order
     if order == 'mean':
         gene_dict = dict(sorted(gene_dict.items(),
@@ -358,17 +363,19 @@ def gene_box(cohort, order='median', percentage=False):
     fig.update_layout(title='Gene distribution of filtered mutations',
                       yaxis_title=y_label,
                       template="simple_white")
+
     fig.update_xaxes(linewidth=2)
     fig.update_yaxes(linewidth=2)
 
-    if percentage is False:
-        fig.update_yaxes(type='log', tickvals=[0.05, 0.1, 0.2, 0.4])
+    if scale is 'log':
+        fig.update_yaxes(type=scale, tickvals=[0.05, 0.1, 0.2, 0.4])
+    
     fig.update_layout(xaxis_tickangle=-45)
 
     return fig, gene_dict
 
 
-def gene_statistic(gene_dict, statistic='kruskal-wallis', filter=True):
+def gene_statistic(lbc, statistic='kruskal-wallis', fitness_threshold = 0.02, filter=True):
     """ compute a statistical test to find significant differences in the
     distribution of fitness by gene.
     statistic parameter accepts: 'kruskal' or 'anova'.
@@ -376,14 +383,24 @@ def gene_statistic(gene_dict, statistic='kruskal-wallis', filter=True):
     * heatmap with significant statistical differences.
     * dataframe."""
 
+    cohort = [traj for part in lbc for traj in part.trajectories if traj.fitness>fitness_threshold]
+
+    # Create gene_dict
+    gene_fitness_list = [(traj.gene, traj.fitness) for traj in cohort]
+
+    gene_fitness_dict =dict()
+    for x, y in gene_fitness_list:
+        gene_fitness_dict.setdefault(x, []).append(y)
+
+    gene_fitness_dict = dict(sorted(gene_fitness_dict.items(), key=lambda item: np.median(item[1]), reverse=True))
     # Check if statistic is allowed
     if statistic not in ['kruskal-wallis', 'anova']:
         return 'Statistic not recognised.'
 
     # extract all possible gene combinations
     gene_list = []
-    for gene in gene_dict.keys():
-        if len(gene_dict[gene]) > 2:
+    for gene in gene_fitness_dict.keys():
+        if len(gene_fitness_dict[gene]) > 1:
             gene_list.append(gene)
 
     # Create dataframe to store statistics
@@ -391,9 +408,9 @@ def gene_statistic(gene_dict, statistic='kruskal-wallis', filter=True):
     for gene1, gene2 in combinations(gene_list, 2):
         # compute statistic for each possible comination of genes
         if statistic == 'kruskal-wallis':
-            stat, pvalue = stats.kruskal(gene_dict[gene1], gene_dict[gene2])
+            stat, pvalue = stats.kruskal(gene_fitness_dict[gene1], gene_fitness_dict[gene2])
         if statistic == 'anova':
-            stat, pvalue = stats.f_oneway(gene_dict[gene1], gene_dict[gene2])
+            stat, pvalue = stats.f_oneway(gene_fitness_dict[gene1], gene_fitness_dict[gene2])
         # if statistic is significant store value in dataframe
         if pvalue < 0.05:
             test_df.loc[gene1, gene2] = stat
@@ -415,6 +432,7 @@ def gene_statistic(gene_dict, statistic='kruskal-wallis', filter=True):
     fig.update_xaxes(side="top", mirror=True)
     fig.update_yaxes(side='top', mirror=True)
     fig.update_layout(template='simple_white')
+    fig.update_layout(margin=dict(pad=4))
 
     return fig, test_df
 
@@ -647,7 +665,7 @@ def find_neutral(cohort):
                 return traj
 
 
-def gene_bar(cohort, split=True, relative=False, color='Grey'):
+def gene_bar(cohort, split=True, relative=False, color=colors[0]):
     """Bar plot with counts of filtered mutations by gene."""
 
     if split is True:
@@ -741,7 +759,115 @@ def gene_bar(cohort, split=True, relative=False, color='Grey'):
             xanchor="right",
             x=0.95,
         ))
+    fig.update_layout(margin=dict(pad=4))
+
     return fig, gene_dict
+
+
+def gradient_threshold_plot(cohort):
+    """ Plot the selection of filtered variants.
+    threshold: Default = 0.02.
+    x_axis: VAF.
+    y_axis: gradient.
+    color: filter attribute.
+    """
+
+
+    # Find fit and netural trajectories to create group
+    fit_traj = find_fit(cohort)
+    artifact_traj = find_neutral(cohort)
+
+    def legend_group(filter):
+        """Legend group assigns a legend group based on filter attribute"""
+        if filter is True:
+            return 'fit mutation'
+        else:
+            return 'artifact'
+
+    def color_group(filter):
+        """ returns a different color based on filter attribute"""
+        return colors[color_dict[legend_group(filter)]]
+
+    
+    def opacity_group(filter):
+        """ returns a different color based on filter attribute"""
+        return opacity_dict[legend_group(filter)]
+
+    # Create figure with inset
+    fig = go.Figure()
+    # Create trajectories for legend groups
+    # Fit trajectories
+    fig.add_trace(
+        go.Scatter(x=[fit_traj.data.AF.max()],
+                    y=[fit_traj.gradient],
+                    name='Fit mutation',
+                    mode='markers',
+                    marker_color=color_group(fit_traj.filter),
+                    marker_size=5,
+                    legendgroup=legend_group(fit_traj.filter),
+                    showlegend=True))
+
+
+    # Neutral trajectories
+    fig.add_trace(
+        go.Scatter(x=[artifact_traj.data.AF.max()],
+                    y=[artifact_traj.gradient],
+                    name='<2%',
+                    mode='markers',
+                    marker_color=color_group(artifact_traj.filter),
+                    marker_size=5,
+                    showlegend=True))
+
+   # Add vertical delimitation of threshold
+    fig.add_vrect(x0=0.01, x1=0.02, line_width=0, fillcolor="red", opacity=0.1)
+
+    for part in cohort:
+        for traj in part.trajectories:
+            if traj.filter is False:
+                fig.add_scatter(x=[traj.data.AF.max()],
+                                y=[traj.gradient],
+                                mode='markers',
+                                marker_color=color_group(traj.filter),
+                                marker_size=5,
+                                marker_opacity=opacity_group(traj.filter),
+                                legendgroup=legend_group(traj.filter),
+                                showlegend=False)
+
+
+    for part in cohort:
+        for traj in part.trajectories:
+            if traj.filter is True:
+                fig.add_scatter(x=[traj.data.AF.max()],
+                                y=[traj.gradient],
+                                mode='markers',
+                                marker_color=color_group(traj.filter),
+                                marker_size=5,
+                                marker_opacity=opacity_group(traj.filter),
+                                legendgroup=legend_group(traj.filter),
+                                showlegend=False)
+
+    fig.update_layout(
+        title=None,
+        template='simple_white',
+        xaxis=dict(title='VAF', type='log', tickvals=[0.01, 0.02, 0.05, 0.1, 0.2]),
+        yaxis=dict(title='Gradient',
+                   range=[-0.02, 0.02]
+                  )
+    )
+
+    fig.update_xaxes(showgrid=True)
+    fig.update_yaxes(showgrid=True)
+
+
+    fig.update_layout(legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="left",
+        x=0)
+    )
+
+    return fig
 
 
 def CHIP_plot(cohort, threshold=0.02):
@@ -772,7 +898,7 @@ def CHIP_plot(cohort, threshold=0.02):
     # Fit trajectories
     if fit_traj is not None:
         fig.add_trace(
-            go.Scatter(x=[fit_traj.data.AF.iloc[0]],
+            go.Scatter(x=[fit_traj.data.AF.max()],
                        y=[fit_traj.gradient],
                        name='CHIP mutations',
                        mode='markers',
@@ -784,7 +910,7 @@ def CHIP_plot(cohort, threshold=0.02):
     # Neutral trajectories
     if neutral_traj is not None:
         fig.add_trace(
-            go.Scatter(x=[neutral_traj.data.AF.iloc[0]],
+            go.Scatter(x=[neutral_traj.data.AF.max()],
                        y=[neutral_traj.gradient],
                        name='non-CHIP mutations',
                        mode='markers',
@@ -796,7 +922,7 @@ def CHIP_plot(cohort, threshold=0.02):
     for part in cohort:
         for traj in part.trajectories:
             fig.add_trace(
-                go.Scatter(x=[traj.data.AF.iloc[0]],
+                go.Scatter(x=[traj.data.AF.max()],
                            y=[traj.gradient],
                            mode='markers',
                            marker=dict(color=color_group(traj.filter),
@@ -827,7 +953,7 @@ def CHIP_plot(cohort, threshold=0.02):
 
 
 def CHIP_plot_inset(cohort, threshold=0.02,
-                    xrange_2=[0.01, 0.03], yrange_2=[-0.01, 0.005]):
+                    xrange_2=[0, 0.03], yrange_2=[-0.01, 0.01]):
     """ Plot the selection of filtered variants.
     threshold: Default = 0.02.
     x_axis: VAF.
@@ -860,7 +986,7 @@ def CHIP_plot_inset(cohort, threshold=0.02,
     # Fit trajectories
     if fit_traj is not None:
         fig.add_trace(
-            go.Scatter(x=[fit_traj.data.AF.iloc[0]],
+            go.Scatter(x=[fit_traj.data.AF.max()],
                        y=[fit_traj.gradient],
                        name='CHIP mutations',
                        mode='markers',
@@ -872,7 +998,7 @@ def CHIP_plot_inset(cohort, threshold=0.02,
     # Neutral trajectories
     if neutral_traj is not None:
         fig.add_trace(
-            go.Scatter(x=[neutral_traj.data.AF.iloc[0]],
+            go.Scatter(x=[neutral_traj.data.AF.max()],
                        y=[neutral_traj.gradient],
                        name='non-CHIP mutations',
                        mode='markers',
@@ -883,23 +1009,45 @@ def CHIP_plot_inset(cohort, threshold=0.02,
 
     for part in cohort:
         for traj in part.trajectories:
-            fig.add_scatter(x=[traj.data.AF.iloc[0]],
-                            y=[traj.gradient],
-                            mode='markers',
-                            marker=dict(color=color_group(traj.filter),
-                                        size=5),
-                            legendgroup=legend_group(traj.filter),
-                            showlegend=False)
+            if traj.filter is False:
+                fig.add_scatter(x=[traj.data.AF.max()],
+                                y=[traj.gradient],
+                                mode='markers',
+                                marker=dict(color=color_group(traj.filter),
+                                            size=5),
+                                legendgroup=legend_group(traj.filter),
+                                showlegend=False)
 
-            # add inset scatter plot
-            fig.add_scatter(x=[traj.data.AF.iloc[0]],
-                            y=[traj.gradient],
-                            xaxis='x2', yaxis='y2',
-                            mode='markers',
-                            marker=dict(color=color_group(traj.filter),
-                                        size=3),
-                            legendgroup=legend_group(traj.filter),
-                            showlegend=False)
+                # add inset scatter plot
+                fig.add_scatter(x=[traj.data.AF.max()],
+                                y=[traj.gradient],
+                                xaxis='x2', yaxis='y2',
+                                mode='markers',
+                                marker=dict(color=color_group(traj.filter),
+                                            size=3),
+                                legendgroup=legend_group(traj.filter),
+                                showlegend=False)
+
+    for part in cohort:
+        for traj in part.trajectories:
+            if traj.filter is True:
+                fig.add_scatter(x=[traj.data.AF.max()],
+                                y=[traj.gradient],
+                                mode='markers',
+                                marker=dict(color=color_group(traj.filter),
+                                            size=5),
+                                legendgroup=legend_group(traj.filter),
+                                showlegend=False)
+
+                # add inset scatter plot
+                fig.add_scatter(x=[traj.data.AF.max()],
+                                y=[traj.gradient],
+                                xaxis='x2', yaxis='y2',
+                                mode='markers',
+                                marker=dict(color=color_group(traj.filter),
+                                            size=3),
+                                legendgroup=legend_group(traj.filter),
+                                showlegend=False)
 
     # Add vertical delimitation of threshold
     fig.add_trace(
@@ -919,7 +1067,7 @@ def CHIP_plot_inset(cohort, threshold=0.02,
         template='plotly_white',
         xaxis=dict(
             title='VAF',
-            range=[0, 0.35]),
+            range=[-0.01, 0.35]),
         yaxis=dict(
             title='Gradient',
             range=[-0.017, 0.08]),
@@ -952,6 +1100,7 @@ def CHIP_plot_inset(cohort, threshold=0.02,
     ))
 
     return fig
+
 
 
 def neutral_plot(cohort, neutral, mean_regr, var_regr, n_std=2):
@@ -1452,4 +1601,953 @@ def participant_filter(part):
                         y=0.95,
                         x=0.1))
 
+    return fig
+
+
+
+
+#endregion
+# =============================================================================
+#region LiFT
+# =============================================================================
+
+color_dict = {'artifact': 1, 'below_2%': 1, 'fit mutation':0}
+opacity_dict = {'artifact': 0.3, 'below_2%': 0.3, 'fit mutation':1}
+
+def plot_cohort_LiFT(cohort, filter_type = 'LiFT'):
+    fig = go.Figure()
+
+    if filter_type == "2%":
+        model_types = ['below_2%', 'fit mutation']
+    else:
+        model_types = ['artifact', 'fit mutation']
+
+    for optimal_model in model_types:
+        fig.add_trace(
+            go.Scatter(x=[70], y=[0],
+                        name=optimal_model,
+                        marker_color=colors[color_dict[optimal_model]],
+                        opacity=opacity_dict[optimal_model]))
+
+    for optimal_model in model_types:
+        marker_color = colors[color_dict[optimal_model]]
+        opacity = opacity_dict[optimal_model]
+        for mutation in cohort:
+            if mutation.optimal_model == optimal_model:
+                if type(mutation.data) is not list:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=mutation.data.age,
+                            y=mutation.data.AF,
+                            showlegend=False,
+                            marker_color=marker_color,
+                            opacity=opacity
+                        )
+                    )   
+                else:           
+                    for traj in mutation.data:
+                        fig.add_trace(
+                                go.Scatter(
+                                    x=traj.age,
+                                    y=traj.AF,
+                                    showlegend=False,
+                                    marker_color=marker_color,
+                                    opacity=opacity
+                                )
+                            )
+    fig.update_layout(xaxis_title='Age',
+                        yaxis_title='VAF')
+
+    fig.update_layout(margin=dict(pad=4))
+    return fig
+
+
+def bayes_factor_threshold_effect(mutation_list):
+    # Create figure with secondary y-axis
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    k_range = np.arange(1,20)
+    k_mutation_counts = []
+    max_counts = 0
+    max_percentage = 0
+    for k in k_range:
+        counts = len([mutation for mutation in mutation_list
+                    if (mutation.bd_prob/mutation.betabinom_artifact_prob > k
+                        )])
+        k_mutation_counts.append(counts)
+    k_mutation_percentage = [100*count/len(mutation_list) for count in k_mutation_counts]
+
+    max_counts = max(max_counts, max(k_mutation_counts))
+    max_percentage = max(max_percentage, max(k_mutation_percentage))
+
+    fig.add_trace(
+        go.Scatter(x=k_range, y=k_mutation_percentage, marker_color=colors[0], name='Beta-binomial'), secondary_y=False)
+
+    fig.add_trace(
+        go.Scatter(x=k_range, y=k_mutation_counts, marker_color=colors[0], name='Beta-binomial', visible=False, showlegend=False), secondary_y=True)
+    k_mutation_counts = []
+
+    for k in k_range:
+        counts = len([mutation for mutation in mutation_list
+                    if (mutation.bd_prob/mutation.binom_artifact_prob > k
+                        )])
+        k_mutation_counts.append(counts)
+    k_mutation_percentage = [100*count/len(mutation_list) for count in k_mutation_counts]
+    max_counts = max(max_counts, max(k_mutation_counts))
+    max_percentage = max(max_percentage, max(k_mutation_percentage))
+
+    for mutation in mutation_list:
+        mutation.compute_optimal_model(binomial=False, bayes_factor_threshold=4)
+
+
+    fig.add_trace(
+        go.Scatter(x=k_range, y=k_mutation_percentage, marker_color=colors[1], name='Binomial'), secondary_y=False)
+    fig.add_trace(
+        go.Scatter(x=k_range, y=k_mutation_counts, 
+                   marker_color=colors[1],
+                   visible= False, 
+                   showlegend=False,
+                   name='Binomial'),
+            secondary_y=True)
+    
+    fig.update_layout(
+        title="Bayes Factor filter",
+        xaxis_title='Bayes Factor',
+        margin=dict(pad=4),
+        legend=dict(
+            xanchor="right",
+            x=0.9))
+
+    fig.update_yaxes(title='% of total mutations', range = [-0.05, max_percentage], secondary_y=False)
+    fig.update_yaxes(title='Mutation counts', range = [-0.05, max_counts], secondary_y=True)
+
+    return fig
+
+
+class pvalue_mutation ():
+    def __init__(self, id, outlier_pvalue=None, mean_AF=None, optimal_model=None):
+        self.id = id
+        self.outlier_pvalue = outlier_pvalue
+        self.mean_AF = mean_AF
+        self.optiaml_model = optimal_model 
+
+def outlier_pvalue_comparison(cohort, fit_mutation_ids):
+    """Plot comparing LiFT results with outlier_pvalue."""
+
+    # Create list of pvalue_mutation class objects
+    # Remark: Not every mutation has a pvalue.
+    pvalue_mutation_list = []
+    ids = []
+    for part in cohort:
+        for traj in part.trajectories:
+            if traj.AF_outlier_pvalue is not None:
+                if traj.mutation not in  ids:
+                    ids.append(traj.mutation)
+                    pvalue_mutation_list.append(
+                        pvalue_mutation(id=traj.mutation,
+                                outlier_pvalue=[],
+                                mean_AF=[])
+                    )
+                for mutation in pvalue_mutation_list:
+                    if mutation.id == traj.mutation:
+                        mutation.outlier_pvalue.append(traj.AF_outlier_pvalue)
+                        mutation.mean_AF.append(np.mean(traj.data.AF))
+
+    for mutation in pvalue_mutation_list:
+        mutation.outlier_pvalue = np.mean(mutation.outlier_pvalue)
+        mutation.mean_AF = np.mean(mutation.mean_AF)
+        
+        if mutation.id in fit_mutation_ids:
+            mutation.optimal_model = 'fit mutation'
+        else:
+            mutation.optimal_model = 'artifact' 
+
+
+    # Create figure
+    fig = go.Figure()
+
+    for optimal_model in ['artifact', 'fit mutation']:
+        fig.add_trace(
+            go.Scatter(x=[0], y=[0.01],
+                       name=optimal_model,
+                       marker_color=colors[color_dict[optimal_model]],
+                       opacity=opacity_dict[optimal_model]
+                    )
+        )
+
+    for optimal_model in ['artifact', 'fit mutation']:
+        marker_color = colors[color_dict[optimal_model]]
+        opacity = opacity_dict[optimal_model]
+        for mutation in pvalue_mutation_list:
+            if mutation.optimal_model == optimal_model:
+                fig.add_trace(
+                    go.Scatter(y=[mutation.mean_AF],
+                            x=[mutation.outlier_pvalue],
+                            showlegend=False,
+                            marker_color = marker_color,
+                            hovertext = mutation.id,
+                            opacity=opacity))
+    fig.update_layout(title='LiFT vs outlier pvalue',
+                      xaxis_title='outlier p value',
+                      yaxis_title='mean VAF')
+    fig.update_layout(margin=dict(pad=4))
+
+    return fig, pvalue_mutation_list
+
+class mdaf_mutation ():
+    def __init__(self, id, mdaf=None, mean_AF=None, optimal_model=None):
+        self.id = id
+        self.mdaf = mdaf
+        self.mean_AF = mean_AF
+        self.optiaml_model = optimal_model 
+
+def mdaf_comparison(cohort, fit_mutation_ids):
+    """Plot comparing LiFT results with outlier_pvalue."""
+    # Create list of all mutations by cohort with repeats
+    mdaf_mutation_list = []
+    ids = []
+    for part in cohort:
+        for traj in part.trajectories:
+            if traj.mdaf is not None:
+                if traj.mutation not in  ids:
+                    ids.append(traj.mutation)
+                    mdaf_mutation_list.append(
+                        mdaf_mutation(id=traj.mutation,
+                                mdaf=[],
+                                mean_AF=[])
+                    )
+                for mutation in mdaf_mutation_list:
+                    if mutation.id == traj.mutation:
+                        mutation.mdaf.append(traj.mdaf)
+                        mutation.mean_AF.append(np.mean(traj.data.AF))
+
+    for mutation in mdaf_mutation_list:
+        mutation.mdaf = np.mean(mutation.mdaf)
+        mutation.mean_AF = np.mean(mutation.mean_AF)
+        
+        if mutation.id in fit_mutation_ids:
+            mutation.optimal_model = 'fit mutation'
+        else:
+            mutation.optimal_model = 'artifact' 
+
+
+    # Plot figure
+    fig = go.Figure()
+
+    for optimal_model in ['artifact', 'fit mutation']:
+        fig.add_trace(
+            go.Scatter(x=[0.02], y=[0.01],
+                        name=optimal_model,
+                        marker_color=colors[color_dict[optimal_model]],
+                        opacity=opacity_dict[optimal_model]
+                    )
+        )
+
+    for optimal_model in ['artifact', 'fit mutation']:
+        marker_color = colors[color_dict[optimal_model]]
+        opacity = opacity_dict[optimal_model]
+        for mutation in mdaf_mutation_list:
+            if mutation.optimal_model == optimal_model:
+                fig.add_trace(
+                    go.Scatter(y=[mutation.mean_AF],
+                            x=[mutation.mdaf],
+                            showlegend=False,
+                            marker_color = marker_color,
+                            hovertext = mutation.id,
+                            opacity=opacity))
+
+    fig.update_layout(title='LiFT vs MDAF',
+                      xaxis_title='MDAF',
+                      yaxis_title='mean VAF')
+    fig.update_layout(margin=dict(pad=4))
+
+    return fig, mdaf_mutation_list
+
+
+
+def LiFT_plot_inset(cohort,
+                    xrange_2=[0.01, 0.03],yrange_2=[-0.01, 0.01]):
+    """ Plot the selection of filtered variants.
+    threshold: Default = 0.02.
+    x_axis: VAF.
+    y_axis: gradient.
+    color: filter attribute.
+    """
+
+
+    # Find fit and netural trajectories to create group
+    fit_traj = find_fit(cohort)
+    artifact_traj = find_neutral(cohort)
+
+    def legend_group(filter):
+        """Legend group assigns a legend group based on filter attribute"""
+        if filter is True:
+            return 'fit mutation'
+        else:
+            return 'artifact'
+
+    def color_group(filter):
+        """ returns a different color based on filter attribute"""
+        return colors[color_dict[legend_group(filter)]]
+
+    
+    def opacity_group(filter):
+        """ returns a different color based on filter attribute"""
+        return opacity_dict[legend_group(filter)]
+
+
+    # Create figure with inset
+    fig = make_subplots(insets=[{'cell': (1, 1), 'l': 0.7, 'b': 0.3}])
+
+    # Create trajectories for legend groups
+    # Fit trajectories
+    fig.add_trace(
+        go.Scatter(x=[fit_traj.data.AF.max()],
+                    y=[fit_traj.gradient],
+                    name='LiFT-positive',
+                    mode='markers',
+                    marker_color=color_group(fit_traj.filter),
+                    marker_size=5,
+                    marker_opacity=opacity_group(fit_traj.filter),
+                    legendgroup=legend_group(fit_traj.filter),
+                    showlegend=True))
+
+    # Neutral trajectories
+    fig.add_trace(
+        go.Scatter(x=[artifact_traj.data.AF.max()],
+                    y=[artifact_traj.gradient],
+                    name='LiFT-negative',
+                    mode='markers',
+                    marker_color=color_group(artifact_traj.filter),
+                    marker_size=5,
+                    marker_opacity=opacity_group(artifact_traj.filter),
+                    showlegend=True))
+
+    for part in cohort:
+        for traj in part.trajectories:
+            if traj.filter is False:
+                fig.add_scatter(x=[traj.data.AF.max()],
+                                y=[traj.gradient],
+                                mode='markers',
+                                marker_color=color_group(traj.filter),
+                                marker_size=5,
+                                marker_opacity=opacity_group(traj.filter),
+                                legendgroup=legend_group(traj.filter),
+                                showlegend=False)
+
+                # add inset scatter plot
+                fig.add_scatter(x=[traj.data.AF.max()],
+                                y=[traj.gradient],
+                                xaxis='x2', yaxis='y2',
+                                mode='markers',
+                                marker_color=color_group(traj.filter),
+                                marker_size=3,
+                                marker_opacity=opacity_group(traj.filter),
+                                legendgroup=legend_group(traj.filter),
+                                showlegend=False)
+
+    for part in cohort:
+        for traj in part.trajectories:
+            if traj.filter is True:
+                fig.add_scatter(x=[traj.data.AF.max()],
+                                y=[traj.gradient],
+                                mode='markers',
+                                marker_color=color_group(traj.filter),
+                                marker_size=5,
+                                marker_opacity=opacity_group(traj.filter),
+                                legendgroup=legend_group(traj.filter),
+                                showlegend=False)
+
+                # add inset scatter plot
+                fig.add_scatter(x=[traj.data.AF.max()],
+                                y=[traj.gradient],
+                                xaxis='x2', yaxis='y2',
+                                mode='markers',
+                                marker_color=color_group(traj.filter),
+                                marker_size=3,
+                                marker_opacity=opacity_group(traj.filter),
+                                legendgroup=legend_group(traj.filter),
+                                showlegend=False)
+
+    # Add vertical delimitation of threshold
+    fig.add_trace(
+        go.Scatter(x=[0.02, 0.02], y=[-0.05, 0.1],
+                   name=f'0.02 VAF threshold',
+                   mode='lines',
+                   line=dict(color=colors[2], width=3, dash='dash')))
+
+    # Add rectangle in zoomed area
+    fig.add_shape(type="rect",
+                  x0=xrange_2[0], y0=yrange_2[0],
+                  x1=xrange_2[1], y1=yrange_2[1],
+                  line=dict(color="Black", width=1))
+
+    fig.update_layout(
+        title=None,
+        template='plotly_white',
+        xaxis=dict(
+            title='VAF',
+            range=[0.01, 0.35]),
+        yaxis=dict(type='log',
+            title='Gradient',
+            range=[-100, 0.08]),
+        yaxis2=dict(
+            title=None,
+            tickfont=dict(size=10),
+            range=yrange_2,
+            domain=[0.55, 1],
+            showline=None,
+            linewidth=1,
+            linecolor='black',
+            mirror=True),
+        xaxis2=dict(
+            title=None,
+            tickfont=dict(size=10),
+            range=xrange_2,
+            domain=[0.6, 1],
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            mirror=True)
+    )
+
+    fig.update_layout(legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="left",
+        x=0
+    ))
+
+    return fig
+
+
+
+
+#endregion
+# =============================================================================
+#region Clonal_model
+# =============================================================================
+
+# Load variant color dictionary
+with open("../Resources/var_dict.json") as json_file:
+    var_dict = json.load(json_file)
+
+default_color="Grey"
+
+def gene_trajectories(model_list, gene, jitter=1, showlegend=False):
+    """Plot all variant trajectories present in a given gene.
+    Parameters:
+    model_list: List. Collection of all fitted trajectories.
+    gene: Float. Gene name.
+    jitter: float. Amount of jitter used in fitness boxplot.
+    Return:
+    fig: Plotly figure. Side-by-side plot of variant trajectories and fitness
+                        boxplot.
+    """
+    symbols = SymbolValidator().values
+
+    fig = make_subplots(rows=1, cols=2,
+                        column_widths=[0.7, 0.3],
+                        subplot_titles=(f'{gene} trajectories',
+                                        'Fitness distribution'))
+    fitness_color = []
+    fitness = []
+
+    traj_list = [traj for traj in model_list if traj.gene == gene]
+    for i, traj in enumerate(traj_list):
+        x = traj.data.age
+        y = traj.data.AF
+        fig.add_trace(
+            go.Scatter(x=x, y=y,
+                       mode='markers',
+                       marker_size=10,
+                       marker_symbol=symbols[8*i + 1],
+                       marker_color=var_dict[traj.variant_class],
+                       name=traj.variant_class,
+                       showlegend=showlegend),
+            row=1, col=1)
+        x_prediction = traj.deterministic_fit[0]
+        y_prediction = traj.deterministic_fit[1]
+        fig.add_trace(
+            go.Scatter(x=x_prediction,
+                       y=y_prediction, mode='lines',
+                       marker_color=var_dict[traj.variant_class],
+                       showlegend=showlegend,
+                       name=traj.mutation),
+            row=1, col=1)
+        fitness.append(traj.fitness)
+        fitness_color.append(var_dict[traj.variant_class])
+
+    # box plot with fitness estimates
+    # Frist create the box
+    fig.add_trace(
+        go.Box(y=fitness, boxpoints=False,
+               name=gene,
+               marker_color=default_color,
+               showlegend=False),
+        row=1, col=2)
+
+    # Seccond create the dots adding jitter
+    for i, item in enumerate(fitness):
+        fig.add_trace(
+            go.Box(y=[item],
+                   marker_size=10,
+                   pointpos=-2, boxpoints='all',
+                   name=gene,
+                   jitter=random.uniform(0, jitter),
+                   marker_symbol=symbols[8*i + 1],
+                   marker_color=fitness_color[i],
+                   line=dict(color='rgba(0,0,0,0)'),
+                   fillcolor='rgba(0,0,0,0)',
+                   showlegend=False),
+            row=1, col=2)
+
+    fig.update_layout(legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0
+        ))
+
+    fig.update_xaxes(title_text='Age (in years)', linewidth=2, row=1, col=1)
+    fig.update_yaxes(title_text='VAF', linewidth=2, row=1, col=1)
+    fig.update_xaxes(showticklabels=False, linewidth=2, row=1, col=2)
+    fig.update_yaxes(title_text='Fitness', linewidth=2, row=1, col=2)
+    fig.update_layout(template='simple_white')
+
+
+    return fig
+
+
+def gene_fitness_plot(lbc, fitness_threshold=0.02):
+
+    cohort = [traj for part in lbc for traj in part.trajectories if traj.fitness>fitness_threshold]
+    
+    # Create a list with the gene names
+    gene_names=list()
+    for traj in cohort:
+        if traj.gene not in gene_names:
+            gene_names.append(traj.gene)
+
+    #Count the number of appearances of each gene in trajectories with over 0.02 of fitness
+    gene_count=pd.DataFrame(columns=['gene','counts'])
+    for gn in gene_names:
+        count=0
+        for traj in cohort:
+            if traj.gene==gn:
+                if traj.fitness>0.02:
+                    count+=1
+        gene_count=gene_count.append({'gene':gn,'counts':count},ignore_index=True)
+
+    #Create a dataframe with the most relevant information of each variant
+
+    fitness_data = pd.DataFrame(columns=['gene','fitness','clonal_size','cs','percentiles_minus','percentiles_plus','x_mpd','y_mpd','unique_name'])
+
+    for traj in cohort:
+        if traj.fitness>0.02:
+            #Count the number of appearances of that gene
+            g_c=list(gene_count.counts[gene_count.gene==traj.gene])[0]
+
+            #Look if the variant belongs to a clone with one or more mutations
+            if traj.clonal_population==1:
+                numb_clones='Clone with 1 mutation'
+                nc=1
+            if traj.clonal_population>1:
+                numb_clones='Clone with 2 or more mutations'
+                nc=2
+            
+            fitness_data=fitness_data.append({'gene':traj.gene,'gene and count':traj.gene+' ('+str(g_c)+')','fitness':traj.fitness,'clonal_size':numb_clones,'cs':nc,'percentiles_minus':traj.fitness_quantiles[0],'percentiles_plus':traj.fitness_quantiles[1],
+            'x_mpd':traj.fitness_posterior[0],'y_mpd':traj.fitness_posterior[1],
+            'unique_name':traj.part_id + ' - ' + traj.mutation},ignore_index=True)
+
+    #Sort the dataframe by criteria of fitness (and by percentile size in case of a tie in fitness)
+    fitness_data=fitness_data.sort_values(by=['fitness','percentiles_plus'],ascending=False)
+    fitness_data=fitness_data.reset_index()
+
+    #Create a dataframe with the information about the median fitness for each gene
+    median_fitness=pd.DataFrame(columns=['gene','mf','gene_and_count'])
+    for gn in list(set(fitness_data.gene)):
+        g_c=list(gene_count.counts[gene_count.gene==gn])[0]
+        median_fitness=median_fitness.append({'gene':gn,'mf':np.median(fitness_data.fitness[fitness_data.gene==gn]),'gene_and_count':gn+' ('+str(g_c)+')'},ignore_index=True)
+
+    #Arrange the dataframe from highest to lowest median fitness
+    median_fitness=median_fitness.sort_values(by='mf',ascending=False)
+
+    #The plot
+
+    fig=go.Figure()
+
+    #Parameters
+    sep=3 #Separation between variants of the same gene (lower sep -> more separation)
+    bxp_w=1.5 #Width of the boxplot lines
+    palette= 2 #Select the color palette (1-> personalised for each gene; 2-> plotly palette)
+
+    count=0
+    gene_count=0
+    x_markers=[0] #List with the positions for the gene labels
+
+    #Look at the genes in order of median fitness
+    for gn in median_fitness.gene:
+        #Create a dataframe the rows with a mutation in that gene in the main datafrane (already ordered by fitness)
+        d=fitness_data[fitness_data.gene==gn]
+
+        #Select the color for that gene depending on the palette choice
+        if palette==1:
+            gene_color=gene_dict[gn]
+
+        if palette==2:
+            gene_color=colors[gene_count%10]
+        
+        gene_count+=1
+        for m in range(len(d.gene)):
+            #A boxplot is generated if there are 2 or more mutations of that gene
+            if len(d.gene)==1:
+                count+=1
+
+            if m==0 and len(d.gene)>1:
+                #Manual generation of the boxplot
+                xm=[count/sep,(count+1)/sep] #boxplot width
+                ym=[np.max(list(d.fitness)),np.min(list(d.fitness)),np.median(list(d.fitness))] #look for boxplot marks
+                yq=list(np.percentile(list(d.fitness),q=[25,75])) #Find the 1st and 3rd quantiles
+
+                #Draw all the lines of the boxplot
+                fig.add_trace(
+                    go.Scatter(x=[xm[0],xm[1],xm[1],xm[0],xm[0]],y=[yq[1],yq[1],yq[0],yq[0],yq[1]],fill='toself',mode='lines',line=dict(color=gene_color,width=bxp_w))
+                )
+                fig.add_trace(
+                    go.Scatter(x=[xm[0],xm[1]],y=[ym[2],ym[2]],mode='lines',line=dict(color=gene_color,width=bxp_w))
+                )
+                fig.add_trace(
+                    go.Scatter(x=[xm[0],xm[1]],y=[ym[0],ym[0]],mode='lines',line=dict(color=gene_color,width=bxp_w))
+                )
+                fig.add_trace(
+                    go.Scatter(x=[xm[0],xm[1]],y=[ym[1],ym[1]],mode='lines',line=dict(color=gene_color,width=bxp_w))
+                )
+                fig.add_trace(
+                    go.Scatter(x=[(xm[0]+xm[1])/2,(xm[0]+xm[1])/2],y=[ym[0],yq[1]],mode='lines',line=dict(color=gene_color,width=bxp_w))
+                )
+                fig.add_trace(
+                    go.Scatter(x=[(xm[0]+xm[1])/2,(xm[0]+xm[1])/2],y=[ym[1],yq[0]],mode='lines',line=dict(color=gene_color,width=bxp_w))
+                )
+                count+=3
+            
+            #Look for the values of y that represent the 90% confidence interval limits
+            ymin=np.argmin(abs(list(d.x_mpd)[m]-list(d.percentiles_minus)[m]))
+            ymax=np.argmin(abs(list(d.x_mpd)[m]-list(d.percentiles_plus)[m]))
+
+            #Normalise the height of the distributions so that they all have the same height at the maximum value
+            xdist=list(d.y_mpd)[m]/(sep*np.max(list(d.y_mpd)[m]))
+
+            #Create lists with the values for the distributions
+            xvals=[count/sep]
+            xvals.extend(-xdist[ymin:(ymax+1)]+count/sep)
+            xvals.append(count/sep)
+            yvals=[list(d.x_mpd)[m][ymin]]
+            yvals.extend(list(d.x_mpd)[m][ymin:(ymax+1)])
+            yvals.append(list(d.x_mpd)[m][ymax])
+
+            #Plot the distribution (with opacity 50% if there is more than 1 mutation in that clone)
+            fig.add_trace(
+                go.Scatter(x=xvals,y=yvals,fill="toself",mode='lines',line=dict(color=gene_color,width=1),name=gn,opacity=1/list(d.cs)[m])
+            )
+            #Add the line of the fitness estimate for that mutation (dashed if there is more than 1 mutation in that clone)
+            if list(d.cs)[m]==1:
+                fig.add_trace(
+                go.Scatter(x=[count/sep,-np.max(xdist)+count/sep],y=[list(d.fitness)[m],list(d.fitness)[m]],mode='lines',line=dict(dash='solid',color=gene_color),name=gn)
+            )
+            if list(d.cs)[m]==2:
+                fig.add_trace(
+                    go.Scatter(x=[count/sep,-np.max(xdist)+count/sep],y=[list(d.fitness)[m],list(d.fitness)[m]],mode='lines',line=dict(dash='dash',color=gene_color,width=0.5),name=gn,opacity=1/list(d.cs)[m])
+                )
+            count+=1
+        count+=1
+        x_markers.append(count/sep)
+
+    #Add x-labels and set the axis range
+    x_markers=list(np.array(x_markers)+1/(2*sep)) #Center the labels to the middle of the firsts distributions/boxplots
+    fig.update_xaxes(tickangle=-45, tickvals=x_markers[:-1],ticktext=median_fitness.gene_and_count,range=[-1/sep,x_markers[-1]])
+    fig.update_yaxes(title='Fitness')
+    fig.update_yaxes(showgrid=True)
+    fig.update_layout(showlegend=False)
+
+    #Show the plot
+    return fig
+
+
+
+def gradient_cohort_plot(cohort,
+                    xrange_2=[0.01, 0.03],yrange_2=[-0.01, 0.01]):
+    """ Plot the selection of filtered variants.
+    threshold: Default = 0.02.
+    x_axis: VAF.
+    y_axis: gradient.
+    color: filter attribute.
+    """
+
+
+    # Find fit and netural trajectories to create group
+    fit_traj = find_fit(cohort)
+    artifact_traj = find_neutral(cohort)
+
+    def legend_group(filter):
+        """Legend group assigns a legend group based on filter attribute"""
+        if filter is True:
+            return 'fit mutation'
+        else:
+            return 'artifact'
+
+    def color_group(filter):
+        """ returns a different color based on filter attribute"""
+        return colors[color_dict[legend_group(filter)]]
+
+    
+    def opacity_group(filter):
+        """ returns a different color based on filter attribute"""
+        return opacity_dict[legend_group(filter)]
+
+
+    # Create figure with inset
+    fig = go.Figure()
+
+    # Create trajectories for legend groups
+    # Fit trajectories
+    fig.add_trace(
+        go.Scatter(x=[fit_traj.data.AF.max()],
+                    y=[fit_traj.gradient],
+                    name='Fit mutation',
+                    mode='markers',
+                    marker_color=color_group(fit_traj.filter),
+                    marker_size=5,
+                    legendgroup=legend_group(fit_traj.filter),
+                    showlegend=True))
+
+    # Neutral trajectories
+    fig.add_trace(
+        go.Scatter(x=[artifact_traj.data.AF.max()],
+                    y=[artifact_traj.gradient],
+                    name='<2%',
+                    mode='markers',
+                    marker_color=color_group(artifact_traj.filter),
+                    marker_size=5,
+                    showlegend=True))
+
+    for part in cohort:
+        for traj in part.trajectories:
+            if traj.filter is False:
+                fig.add_scatter(x=[traj.data.AF.max()],
+                                y=[traj.gradient],
+                                mode='markers',
+                                marker_color=color_group(traj.filter),
+                                marker_size=5,
+                                marker_opacity=opacity_group(traj.filter),
+                                legendgroup=legend_group(traj.filter),
+                                showlegend=False)
+
+
+    for part in cohort:
+        for traj in part.trajectories:
+            if traj.filter is True:
+                fig.add_scatter(x=[traj.data.AF.max()],
+                                y=[traj.gradient],
+                                mode='markers',
+                                marker_color=color_group(traj.filter),
+                                marker_size=5,
+                                marker_opacity=opacity_group(traj.filter),
+                                legendgroup=legend_group(traj.filter),
+                                showlegend=False)
+
+
+    # Add vertical delimitation of threshold
+    # fig.add_vline(x=VAF_threshold,
+    #               line_width=3, line_dash="dash", line_color=colors[2])
+    fig.add_vrect(x0=0.01, x1=0.02, line_width=0, fillcolor="red", opacity=0.2)
+
+    fig.update_layout(
+        title=None,
+        template='simple_white',
+        xaxis=dict(title='VAF', type='log', tickvals=[0.01, 0.02, 0.05, 0.1, 0.2]),
+        yaxis=dict(title='Gradient',
+                   range=[-0.02, 0.02]
+                  )
+    )
+
+    fig.update_xaxes(showgrid=True)
+    fig.update_yaxes(showgrid=True)
+
+
+    fig.update_layout(legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="left",
+        x=0)
+    )
+
+    return fig
+
+
+def gradient_LiFT_plot(cohort, syn):
+    """ Plot the selection of filtered variants.
+    threshold: Default = 0.02.
+    x_axis: VAF.
+    y_axis: gradient.
+    color: filter attribute.
+    """
+
+
+    # Find fit and netural trajectories to create group
+    fit_traj = find_fit(cohort)
+    artifact_traj = find_neutral(cohort)
+
+    def legend_group(filter):
+        """Legend group assigns a legend group based on filter attribute"""
+        if filter is True:
+            return 'fit mutation'
+        else:
+            return 'artifact'
+
+    def color_group(filter):
+        """ returns a different color based on filter attribute"""
+        return colors[color_dict[legend_group(filter)]]
+
+    
+    def opacity_group(filter):
+        """ returns a different color based on filter attribute"""
+        return opacity_dict[legend_group(filter)]
+
+    # Create figure with inset
+    fig = go.Figure()
+
+    # Add vertical delimitation of threshold
+    fig.add_vrect(x0=0.01, x1=0.02, line_width=0, fillcolor="red", name='2% filter' ,opacity=0.05)
+
+    # Create trajectories for legend groups
+    # Fit trajectories
+    fig.add_trace(
+        go.Scatter(x=[fit_traj.data.AF.max()],
+                    y=[fit_traj.gradient],
+                    name='Fit mutation',
+                    mode='markers',
+                    marker_color=color_group(fit_traj.filter),
+                    marker_size=5,
+                    legendgroup=legend_group(fit_traj.filter),
+                    showlegend=True))
+
+
+    # Neutral trajectories
+    fig.add_trace(
+        go.Scatter(x=[artifact_traj.data.AF.max()],
+                    y=[artifact_traj.gradient],
+                    name='Filtered',
+                    mode='markers',
+                    marker_color=color_group(artifact_traj.filter),
+                    marker_size=5,
+                    showlegend=True))
+
+    # Plot synonymous variants
+    syn_traj = syn[0].trajectories[0]
+    fig.add_scatter(
+        x=[syn_traj.data.AF.max()],
+        y=[syn_traj.gradient],
+        mode='markers',
+        name='Synonymous',
+        marker_color=colors[2],
+        marker_size=5,
+        marker_opacity=0.3,
+        legendgroup=legend_group('synonymous'),
+        showlegend=True)
+
+    for part in syn:
+        for traj in part.trajectories:
+            fig.add_scatter(
+                x=[traj.data.AF.max()],
+                y=[traj.gradient],
+                mode='markers',
+                marker_color=colors[2],
+                marker_size=5,
+                marker_opacity=0.3,
+                legendgroup=legend_group('synonymous'),
+                showlegend=False)
+
+    for part in cohort:
+        for traj in part.trajectories:
+            if traj.filter is False:
+                fig.add_scatter(x=[traj.data.AF.max()],
+                                y=[traj.gradient],
+                                mode='markers',
+                                marker_color=color_group(traj.filter),
+                                marker_size=5,
+                                marker_opacity=opacity_group(traj.filter),
+                                legendgroup=legend_group(traj.filter),
+                                showlegend=False)
+
+
+    for part in cohort:
+        for traj in part.trajectories:
+            if traj.filter is True:
+                fig.add_scatter(x=[traj.data.AF.max()],
+                                y=[traj.gradient],
+                                mode='markers',
+                                marker_color=color_group(traj.filter),
+                                marker_size=5,
+                                marker_opacity=opacity_group(traj.filter),
+                                legendgroup=legend_group(traj.filter),
+                                showlegend=False)
+
+    fig.update_layout(
+        title=None,
+        template='simple_white',
+        xaxis=dict(title='VAF', type='log', tickvals=[0.01, 0.02, 0.05, 0.1, 0.2]),
+        yaxis=dict(title='Gradient',
+                   range=[-0.02, 0.02]
+                  )
+    )
+
+    fig.update_xaxes(showgrid=True)
+    fig.update_yaxes(showgrid=True)
+
+
+    fig.update_layout(legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="left",
+        x=0)
+    )
+    fig.update_layout(margin=dict(pad=4))
+
+    return fig
+
+def gene_trajectories_legend(cohort):
+    # Load variant color dictionary
+    with open("../Resources/var_dict.json") as json_file:
+        var_dict = json.load(json_file)
+
+    default_color="Grey"
+
+    genes = ['DNMT3A', 'JAK2', 'TET2', 'ASXL1']
+
+    cohort_variants = set([traj.variant_class
+                           for part in cohort
+                             for traj in part.trajectories
+                               if traj.gene in genes])
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(x=[0], y=[0], mode='markers', marker_color='grey',
+                name='Data points',
+                showlegend=True))
+
+    fig.add_trace(
+        go.Scatter(x=[0,1], y=[0,1], mode='lines', marker_color='grey',
+                    name='Fitted trajectories',
+                showlegend=True))
+
+    for variant in cohort_variants:
+        fig.add_trace(
+            go.Scatter(x=[0], y=[0], mode='markers', name=variant, marker_color=var_dict[variant]))
+    fig.update_layout(margin=dict(pad=4))
     return fig

@@ -2,22 +2,36 @@
 # Create and activate conda environment from yml file
 echo "Installing and activating conda environment."
 
-eval "$(conda shell.bash hook)"
-conda env create --file env/ARCH_env.yml --name ARCH_env
-
-conda activate ARCH_env
-
-# add environment to jupyter notebooks
-conda install -c anaconda ipykernel
-python -m ipykernel install --user --name=ARCH_env
+# Activate conda environment
+# conda info | grep -i 'base environment'
+source ~/anaconda3/etc/profile.d/conda.sh
+conda activate ARCH
 
 cd Scripts
 
-# Run NGF analysis
-python full_NGF_run.py
-# Run threshold analysis
-python full_threshold_run.py
-# Run survival analysis
+# Exclude participants from study
+python excluded_participants.py
+
+# Cohort preprocessing
+python cohort_preprocessing.py
+
+# Creating distribution priors
+echo "Creating prior_distributions"
+python prior_distributions.py
+
+# LiFT filter
+echo "LiFT filter"
+python LiFT_filter.py
+
+echo "Clonal fit"
+python LiFT_clonal_fit.py
+
+echo "survival analysis"
 python survival_analysis.py
-# Run NGF analysis
-python further_analysis.py
+
+# Threshold filter
+echo "Threshold filter"
+python threshold_filter.py
+
+echo "Clonal fit"
+python threshold_clonal_fit.py
