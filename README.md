@@ -45,7 +45,7 @@ trackable trajectories associated to genetic clones.
 
 2. Create a filter to select clones presenting an abnormal behaviour.
     * Threshold filter: Selects variants based on a threshold of the clone size.
-    * Likelihood-based Filter for Time-series data (LIFT): Selects variants using 
+    * Likelihood-based Filter for Time-series data (LiFT): Selects variants using 
     Bayesian model comparison.
 
 3. Use Bayesian model comparison to select the most likely clonal structure 
