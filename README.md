@@ -55,7 +55,7 @@ advantage conferred by genetic variants to haematopoietic stem cells.
 4. Quality control, statistical analysis and association with protein damage
 prediction.
 
-![LiFT_clonal_flowdiag](https://user-images.githubusercontent.com/4477113/165508296-6d8e431b-b4b3-47ed-a646-7cd7ead9ed03.png)
+<img width="550" alt="image" src="https://user-images.githubusercontent.com/4477113/165508731-cb00cea0-90f5-4e71-b4bf-bfcc22284559.png">
 
 ## Set up
 ### Data
