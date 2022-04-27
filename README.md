@@ -56,7 +56,7 @@ advantage conferred by genetic variants to haematopoietic stem cells.
 prediction.
 
 <p align="center">
-  <img width="550" alt="image" src="https://user-images.githubusercontent.com/4477113/165508731-cb00cea0-90f5-4e71-b4bf-bfcc22284559.png">
+  <img width="518" alt="image" src="https://user-images.githubusercontent.com/4477113/165510677-3a228bbd-f06d-4a8e-9d1b-708e50ec10e0.png">
 </p>
 
 
